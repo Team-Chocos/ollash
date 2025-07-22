@@ -3,18 +3,20 @@ import sys
 import re
 from .utils import get_os_label
 from .utils import schedule_model_shutdown
+from .utils import is_model_installed, pull_model_with_progress
 
 
-def run_nl_to_bash(prompt: str, autostop=None):
-    # prompt = " ".join(sys.argv[1:])
+def run_nl_to_bash(prompt: str, autostop=None, model="llama3"):
     if not prompt:
         print("Usage: ollash <natural language command>")
         return
+    
+    if not is_model_installed(model):
+        pull_model_with_progress(model)
 
     os_label = get_os_label()
-
     ollama_cmd = [
-        "ollama", "run", "llama3", 
+        "ollama", "run", model,
         f"Translate the following instruction into a safe {os_label} terminal command. Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
     ]
 

@@ -112,3 +112,22 @@ def schedule_model_shutdown(timeout=300):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
+def is_model_installed(model_name):
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True, text=True, encoding="utf-8", errors="ignore"
+        )
+        return model_name.lower() in result.stdout.lower()
+    except Exception:
+        return False
+
+def pull_model_with_progress(model_name):
+    print(f"\n📦 Model '{model_name}' not found. Downloading now...")
+    show_download_progress()
+    try:
+        subprocess.run(["ollama", "pull", model_name], check=True)
+    except subprocess.CalledProcessError:
+        print("❌ Failed to pull the model. Please check the name or your internet connection.")
+        sys.exit(1)
+
