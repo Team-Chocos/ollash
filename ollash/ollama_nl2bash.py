@@ -19,7 +19,14 @@ def run_nl_to_bash(prompt: str, autostop=None):
     ]
 
 
-    response = subprocess.run(ollama_cmd, capture_output=True, text=True)
+    response = subprocess.run(
+        ollama_cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",       # safer encoding
+        errors="ignore"         # skip bad chars instead of crashing
+    )
+
     raw_output = response.stdout.strip()
 
     command = extract_command(raw_output)
