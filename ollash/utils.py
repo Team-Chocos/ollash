@@ -6,6 +6,7 @@ import time
 from .progress import show_download_progress
 import platform
 
+
 def get_os_label():
     os_name = platform.system().lower()
     if "windows" in os_name:
@@ -93,13 +94,21 @@ def ensure_ollama_ready():
 
         print("✅ Ollash is ready to use!\n")
 
-import threading
 
 def schedule_model_shutdown(timeout=300):
-    def shutdown():
-        print(f"🧹 Inactivity timer expired. Unloading llama3...")
-        subprocess.run(["ollama", "stop", "llama3"])
-    t = threading.Timer(timeout, shutdown)
-    t.daemon = True
-    t.start()
-    
+    os_name = platform.system().lower()
+
+    if "windows" in os_name:
+        # Use `timeout` on Windows (PowerShell / cmd-safe)
+        subprocess.Popen(
+            ["powershell", "-Command", f"Start-Sleep -Seconds {timeout}; ollama stop llama3"],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        # POSIX-compatible (Linux/macOS)
+        subprocess.Popen(
+            f"sleep {timeout}; ollama stop llama3",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
