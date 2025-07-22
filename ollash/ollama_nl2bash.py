@@ -4,9 +4,9 @@ import re
 from .utils import get_os_label
 from .utils import schedule_model_shutdown
 from .utils import is_model_installed, pull_model_with_progress
+from ollash.rag_pipeline import get_contextual_command
 
-
-def run_nl_to_bash(prompt: str, autostop=None, model="llama3"):
+def run_nl_to_bash(prompt: str, autostop=None, model="llama3", use_rag= True):
     if not prompt:
         print("Usage: ollash <natural language command>")
         return
@@ -15,12 +15,14 @@ def run_nl_to_bash(prompt: str, autostop=None, model="llama3"):
         pull_model_with_progress(model)
 
     os_label = get_os_label()
-    ollama_cmd = [
-        "ollama", "run", model,
-        f"Translate the following instruction into a safe {os_label} terminal command. Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
-    ]
-
-
+    if use_rag:
+        ollama_cmd = get_contextual_command(prompt, "rag_datastore/", model_name=model, os_label=os_label)
+    else:
+        ollama_cmd = [
+            "ollama", "run", model,
+            f"Translate the following instruction into a safe {os_label} terminal command. Don't write bash or zsh just give the command in one line. No markdown formatting Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
+        ]
+    print(ollama_cmd)
     response = subprocess.run(
         ollama_cmd,
         capture_output=True,

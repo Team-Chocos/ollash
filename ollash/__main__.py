@@ -7,6 +7,7 @@ def main():
     parser.add_argument("prompt", nargs="+", help="Your natural language instruction")
     parser.add_argument("--autostop", type=int, help="Time in seconds to auto-unload model")
     parser.add_argument("--model", default="llama3", help="Ollama model to use (default: llama3)")
+    parser.add_argument("--use_rag", default="True", help="Use RAG for context retrieval")
     args = parser.parse_args()
 
     if not args.prompt:
@@ -14,4 +15,4 @@ def main():
         return
 
     ensure_ollama_ready()
-    run_nl_to_bash(" ".join(args.prompt), autostop=args.autostop, model=args.model)
+    run_nl_to_bash(" ".join(args.prompt), autostop=args.autostop, model=args.model, use_rag=args.use_rag.lower() == "true")
