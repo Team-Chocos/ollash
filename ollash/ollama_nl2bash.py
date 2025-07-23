@@ -39,7 +39,7 @@ def run_nl_to_bash(prompt: str, autostop=None, model="llama3"):
         subprocess.run(command, shell=True)
     if autostop:
         print(f"🕒 Auto-unloading model after {autostop} seconds of inactivity...")
-        schedule_model_shutdown(timeout=autostop)
+        schedule_model_shutdown(timeout=autostop, model=model)
 
 
 def extract_command(raw_output: str) -> str:

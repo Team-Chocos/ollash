@@ -14,6 +14,9 @@ setup(
     packages=find_packages(),
     python_requires='>=3.7',
     include_package_data=True,
+    package_data={
+        "ollash": ["config.yaml"]
+    },
     entry_points={
         'console_scripts': [
             'ollash=ollash.__main__:main'

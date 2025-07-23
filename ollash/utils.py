@@ -95,19 +95,19 @@ def ensure_ollama_ready():
         print("✅ Ollash is ready to use!\n")
 
 
-def schedule_model_shutdown(timeout=300):
+def schedule_model_shutdown(timeout=300, model="llama3"):
     os_name = platform.system().lower()
 
     if "windows" in os_name:
         # Use `timeout` on Windows (PowerShell / cmd-safe)
         subprocess.Popen(
-            ["powershell", "-Command", f"Start-Sleep -Seconds {timeout}; ollama stop llama3"],
+            ["powershell", "-Command", f"Start-Sleep -Seconds {timeout}; ollama stop {model}"],
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         )
     else:
         # POSIX-compatible (Linux/macOS)
         subprocess.Popen(
-            f"sleep {timeout}; ollama stop llama3",
+            f"sleep {timeout}; ollama stop {model}",
             shell=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
