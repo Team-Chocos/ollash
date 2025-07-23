@@ -5,6 +5,7 @@ import argparse
 from ollash.utils import ensure_ollama_ready
 from ollash.ollama_nl2bash import run_nl_to_bash
 
+
 def load_config():
     config_path = Path(user_config_dir("ollash")) / "config.yaml"
     if config_path.exists():
@@ -20,15 +21,16 @@ def main():
     parser = argparse.ArgumentParser(description="Ollash: Natural Language to Terminal Command")
     parser.add_argument("prompt", nargs="+", help="Your natural language instruction")
     parser.add_argument("--autostop", type=int, help="Time in seconds to auto-unload model")
-    parser.add_argument("--model", default="llama3", help="Ollama model to use (default: llama3)")
+    parser.add_argument("--model", help="Ollama model to use (default: llama3)")
     args = parser.parse_args()
 
-    print(args.autostop)
-
     autostop = args.autostop if args.autostop else config.get("autostop")
-    model = args.model if args.model else config.get("model", "llama3")
-
-    print(autostop, model)
+    if args.model:
+        model = args.model
+    elif config.get("model"):
+        model = config.get("model")
+    else:
+        model = "llama3"
 
     if not args.prompt:
         print("❌ Please provide an instruction. Example:\nollash --autostop 300 list all files")
