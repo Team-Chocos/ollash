@@ -1,142 +1,22 @@
 # ollash/shell.py
 import subprocess
-from textual.app import App, ComposeResult
-from textual.widgets import Static, Input
-from textual.containers import Vertical
-from textual.reactive import reactive
-
-from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress
-from ollash.ollama_nl2bash import run_nl_to_bash
+import sys
+from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress, get_os_label
 
 
-class TerminalBox(Static): pass
-class InputBox(Input): pass
+def get_command_suggestion(prompt: str, model: str) -> str:
+    """Get command suggestion from Ollama without interactive prompts"""
+    if not is_model_installed(model):
+        pull_model_with_progress(model)
 
-
-class OllashShell(App):
-    CSS = """
-    Screen {
-        layout: vertical;
-        padding: 1;
-    }
-    #terminal {
-        height: 90%;
-        border: round green;
-        overflow: auto;
-    }
-    #input {
-        border: round yellow;
-    }
-    """
-
-    def __init__(self, model="llama3", **kwargs):
-        super().__init__(**kwargs)
-        self.model = model
-        self.last_command = None  # Store the last suggested command
-
-    def compose(self) -> ComposeResult:
-        self.terminal = TerminalBox("", id="terminal")
-        yield Vertical(
-            self.terminal,
-            InputBox(placeholder="Enter natural language command...", id="input"),
-        )
-
-    def on_mount(self):
-        # Ensure Ollama is installed and running
-        ensure_ollama_ready()
-        
-        # Ensure the specific model is available
-        if not is_model_installed(self.model):
-            pull_model_with_progress(self.model)
-            
-        # Set initial content with instructions
-        initial_message = (
-            f"🧠 Loaded model: {self.model}\n"
-            f"💡 Commands:\n"
-            f"  • Type natural language to get command suggestions\n"
-            f"  • Type ':run' to execute the last suggested command\n"
-            f"  • Type ':exit' to quit\n"
-        )
-        self.terminal.update(initial_message)
-
-    def on_input_submitted(self, message: Input.Submitted) -> None:
-        query = message.value.strip()
-        current_output = self.terminal.renderable
-        
-        if query in (":exit", "exit", "quit"):
-            self.exit_shell()
-            return
-        
-        # Handle :run command
-        if query == ":run":
-            if self.last_command:
-                self.terminal.update(current_output + f"\n🚀 Executing: {self.last_command}\n")
-                self.execute_command(self.last_command)
-            else:
-                self.terminal.update(current_output + "\n❌ No command to run. Generate a command first.\n")
-            self.query_one(InputBox).value = ""
-            return
-
-        self.query_one(InputBox).value = ""
-        
-        # Show that we're processing
-        self.terminal.update(current_output + f"\n💬 You: {query}\n🔄 Processing...")
-        
-        try:
-            # Get the command without interactive prompts
-            command = self.get_command_non_interactive(query)
-            self.last_command = command  # Store for :run
-            
-            # Update with the suggested command
-            new_output = current_output + f"\n💬 You: {query}\n🖥️  Suggested: {command}\n💡 Type ':run' to execute\n"
-            self.terminal.update(new_output)
-            
-        except Exception as e:
-            new_output = current_output + f"\n💬 You: {query}\n❌ Error: {str(e)}\n"
-            self.terminal.update(new_output)
+    os_label = get_os_label()
     
-    def execute_command(self, command: str):
-        """Execute a shell command and display the output"""
-        try:
-            result = subprocess.run(
-                command, 
-                shell=True, 
-                capture_output=True, 
-                text=True,
-                encoding="utf-8",
-                errors="ignore"
-            )
-            
-            current_output = self.terminal.renderable
-            
-            if result.stdout:
-                self.terminal.update(current_output + f"📤 Output:\n{result.stdout}\n")
-            
-            if result.stderr:
-                self.terminal.update(self.terminal.renderable + f"⚠️  Error:\n{result.stderr}\n")
-                
-            if result.returncode != 0:
-                self.terminal.update(self.terminal.renderable + f"❌ Command failed with exit code: {result.returncode}\n")
-            else:
-                self.terminal.update(self.terminal.renderable + f"✅ Command completed successfully\n")
-                
-        except Exception as e:
-            current_output = self.terminal.renderable
-            self.terminal.update(current_output + f"❌ Failed to execute: {str(e)}\n")
-    
-    def get_command_non_interactive(self, prompt: str) -> str:
-        """Get command suggestion without interactive prompts"""
-        if not is_model_installed(self.model):
-            pull_model_with_progress(self.model)
+    ollama_cmd = [
+        "ollama", "run", model,
+        f"Translate the following instruction into a safe {os_label} terminal command. Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
+    ]
 
-        from ollash.utils import get_os_label
-        os_label = get_os_label()
-        
-        ollama_cmd = [
-            "ollama", "run", self.model,
-            f"Translate the following instruction into a safe {os_label} terminal command. Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
-        ]
-
+    try:
         response = subprocess.run(
             ollama_cmd,
             capture_output=True,
@@ -147,21 +27,155 @@ class OllashShell(App):
 
         raw_output = response.stdout.strip()
         
-        # Extract command (reusing the logic from your original function)
+        # Extract command
         import re
         match = re.search(r"`([^`]+)`", raw_output)
         command = match.group(1).strip() if match else raw_output.strip().splitlines()[0]
         
         return command
+    except Exception as e:
+        raise Exception(f"Failed to get command suggestion: {e}")
 
-    def exit_shell(self):
-        new_output = self.terminal.renderable + f"\n👋 Stopping model: {self.model}...\n"
-        self.terminal.update(new_output)
-        subprocess.run(["ollama", "stop", self.model])
-        self.exit()
+
+def execute_command(command: str) -> bool:
+    """Execute a command and return True if successful"""
+    try:
+        result = subprocess.run(command, shell=True)
+        return result.returncode == 0
+    except KeyboardInterrupt:
+        print("\n^C")
+        return False
+    except Exception as e:
+        print(f"Error executing command: {e}")
+        return False
+
+
+def print_help():
+    """Print help information"""
+    print("""
+Available commands:
+  <natural language>  - Get command suggestion and choose to run it
+  :help              - Show this help
+  :exit, :quit       - Exit the shell
+  :model <name>      - Switch to a different model
+  Ctrl+C             - Cancel current operation
+  Ctrl+D             - Exit the shell
+""")
 
 
 def main(model=None):
-    # Use the passed model or default to llama3
+    """Main REPL shell function"""
     model = model or "llama3"
-    OllashShell(model=model).run()
+    
+    print(f"🧠 Ollash Shell - Model: {model}")
+    print("Type ':help' for commands or Ctrl+D to exit")
+    
+    # Ensure Ollama is ready
+    try:
+        ensure_ollama_ready()
+        if not is_model_installed(model):
+            pull_model_with_progress(model)
+    except Exception as e:
+        print(f"❌ Setup failed: {e}")
+        return
+
+    print("✅ Ready!\n")
+
+    while True:
+        try:
+            # Get user input
+            try:
+                user_input = input(f"ollash({model})> ").strip()
+            except EOFError:
+                print("\n👋 Goodbye!")
+                break
+            except KeyboardInterrupt:
+                print("\n^C")
+                continue
+
+            if not user_input:
+                continue
+
+            # Handle special commands
+            if user_input in [":exit", ":quit"]:
+                print("👋 Goodbye!")
+                break
+            
+            elif user_input == ":help":
+                print_help()
+                continue
+            
+            elif user_input.startswith(":model "):
+                new_model = user_input[7:].strip()
+                if new_model:
+                    if not is_model_installed(new_model):
+                        try:
+                            pull_model_with_progress(new_model)
+                            model = new_model
+                            print(f"✅ Switched to model: {model}")
+                        except Exception as e:
+                            print(f"❌ Failed to load model '{new_model}': {e}")
+                    else:
+                        model = new_model
+                        print(f"✅ Switched to model: {model}")
+                else:
+                    print("❌ Please specify a model name")
+                continue
+            
+            # Get command suggestion
+            try:
+                print("🔄 Thinking...")
+                command = get_command_suggestion(user_input, model)
+                print(f"💡 Suggested command: {command}")
+                
+                # Ask if user wants to run it
+                while True:
+                    try:
+                        choice = input("Run this command? [y/N/e(dit)]: ").strip().lower()
+                        if choice in ['', 'n', 'no']:
+                            break
+                        elif choice in ['y', 'yes']:
+                            print(f"🚀 Running: {command}")
+                            success = execute_command(command)
+                            if success:
+                                print("✅ Command completed")
+                            else:
+                                print("❌ Command failed")
+                            break
+                        elif choice in ['e', 'edit']:
+                            try:
+                                edited_command = input(f"Edit command [{command}]: ").strip()
+                                if edited_command:
+                                    command = edited_command
+                                print(f"🚀 Running: {command}")
+                                success = execute_command(command)
+                                if success:
+                                    print("✅ Command completed")
+                                else:
+                                    print("❌ Command failed")
+                                break
+                            except (EOFError, KeyboardInterrupt):
+                                print("\n❌ Cancelled")
+                                break
+                        else:
+                            print("Please enter 'y' for yes, 'n' for no, or 'e' to edit")
+                    except (EOFError, KeyboardInterrupt):
+                        print("\n❌ Cancelled")
+                        break
+                        
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                
+        except KeyboardInterrupt:
+            print("\n^C")
+            continue
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            continue
+
+    # Cleanup
+    try:
+        print(f"🕒 Stopping model: {model}...")
+        subprocess.run(["ollama", "stop", model], capture_output=True)
+    except:
+        pass
