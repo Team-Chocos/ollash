@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 setup(
     name='ollash',
-    version='0.1.4',
+    version='0.1.5',
     author='Sparsh Chakraborty',
     author_email='sparsh.chakraborty07@gmail.com',
     description='Convert natural language into safe Terminal commands using Ollama.',
