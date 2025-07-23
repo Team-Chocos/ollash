@@ -298,7 +298,13 @@ def main(model=None):
                 else:
                     print_status("Please specify a model name", "error", in_box=False)
                 continue
-            
+            elif user_input.startswith(":sh "):
+                command = user_input[4:]
+                print_execution_start(command)
+                success = execute_command(command)
+                print_execution_result(success)
+                continue
+
             # Get command suggestion
             try:
                 animation = ThinkingAnimation("Generating command")
