@@ -1,6 +1,6 @@
 # ollash/shell.py
 import subprocess
-import sys
+# import sys
 import os
 import time
 import threading
@@ -72,7 +72,7 @@ def animate_lightning():
     """Animate lightning bolt"""
     lightning_frames = ["⚬", "⚡", "⚡"]
     colors = ["\033[33m", "\033[93m", "\033[33m"]  # yellow variations
-    for i, (frame, color) in enumerate(zip(lightning_frames, colors)):
+    for _, (frame, color) in enumerate(zip(lightning_frames, colors)):
         print(f"\r│ {color}{frame}\033[0m", end='', flush=True)
         time.sleep(0.15)
     print()
