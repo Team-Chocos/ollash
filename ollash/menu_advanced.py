@@ -1,385 +1,394 @@
 # ollash/menu_advanced.py
 import subprocess
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import os
-import time
-import threading
-import sys
+import glob
 
-# Try different libraries for dropdown selection
-HAS_PROMPT_TOOLKIT = False
-HAS_RICH = False
-HAS_INQUIRER = False
+# Only use pyfzf for UI
 HAS_PYFZF = False
-
-try:
-    from prompt_toolkit.shortcuts import radiolist_dialog
-    from prompt_toolkit.styles import Style
-    HAS_PROMPT_TOOLKIT = True
-except ImportError:
-    pass
-
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.prompt import Prompt
-    from rich.panel import Panel
-    from rich.text import Text
-    HAS_RICH = True
-except ImportError:
-    pass
-
-try:
-    import inquirer
-    HAS_INQUIRER = True
-except ImportError:
-    pass
-
 try:
     from pyfzf.pyfzf import FzfPrompt
     HAS_PYFZF = True
 except ImportError:
     pass
 
-# Try to import readline for better input editing
-try:
-    import readline
-    HAS_READLINE = True
-except ImportError:
-    HAS_READLINE = False
+
+class BackendManager:
+    """Manages different backend configurations and model lists"""
+    
+    def __init__(self):
+        self.backends = {
+            "ollama": {
+                "name": "[OLLAMA]",
+                "description": "Local Ollama server (easiest setup)",
+                "status": self._check_ollama_status()
+            },
+            "llama_cpp": {
+                "name": "[LLAMA.CPP]", 
+                "description": "Direct llama.cpp integration (fastest)",
+                "status": self._check_llamacpp_status()
+            },
+            "gguf": {
+                "name": "[GGUF]",
+                "description": "Local GGUF model files",
+                "status": self._check_gguf_status()
+            }
+        }
+    
+    def _check_ollama_status(self) -> str:
+        """Check if Ollama is available"""
+        try:
+            result = subprocess.run(
+                ["ollama", "--version"], 
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            return "READY" if result.returncode == 0 else "NOT INSTALLED"
+        except:
+            return "NOT INSTALLED"
+    
+    def _check_llamacpp_status(self) -> str:
+        """Check if llama.cpp is available"""
+        # Check for llama-cpp-python first (easier to install)
+        try:
+            import llama_cpp
+            return "READY"
+        except ImportError:
+            pass
+        
+        # Check for compiled llama.cpp executables
+        executables = ["llama-cli", "main"]
+        for exe in executables:
+            try:
+                result = subprocess.run(
+                    ["which", exe] if os.name != 'nt' else ["where", exe],
+                    capture_output=True,
+                    timeout=3
+                )
+                if result.returncode == 0:
+                    return "READY"
+            except:
+                continue
+        return "WILL INSTALL"
+    
+    def _check_gguf_status(self) -> str:
+        """Check if GGUF directory exists"""
+        gguf_dirs = [
+            os.path.expanduser("~/models"),
+            os.path.expanduser("~/.cache/huggingface"),
+            "./models",
+            "/opt/models"
+        ]
+        
+        for dir_path in gguf_dirs:
+            if os.path.exists(dir_path):
+                gguf_files = glob.glob(os.path.join(dir_path, "**/*.gguf"), recursive=True)
+                if gguf_files:
+                    return f"READY ({len(gguf_files)} models)"
+        
+        return "NO MODELS FOUND"
+    
+    def get_backend_options(self) -> List[str]:
+        """Get formatted backend options for selection"""
+        options = []
+        for key, backend in self.backends.items():
+            status_info = f" [{backend['status']}]"
+            option = f"{backend['name']} - {backend['description']}{status_info}"
+            options.append(option)
+        return options
+    
+    def parse_backend_selection(self, selection: str) -> str:
+        """Parse backend selection back to key"""
+        if "[OLLAMA]" in selection:
+            return "ollama"
+        elif "[LLAMA.CPP]" in selection:
+            return "llama_cpp"
+        elif "[GGUF]" in selection:
+            return "gguf"
+        return "ollama"  # fallback
+
+
+class ModelManager:
+    """Manages model lists for different backends"""
+    
+    def __init__(self):
+        self.backend_manager = BackendManager()
+    
+    def install_llamacpp(self) -> bool:
+        """Install llama-cpp-python if not available"""
+        print("Installing llama.cpp (llama-cpp-python)...")
+        try:
+            import subprocess
+            import sys
+            
+            # Install llama-cpp-python
+            result = subprocess.run([
+                sys.executable, "-m", "pip", "install", "llama-cpp-python"
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print("✓ llama.cpp installed successfully")
+                return True
+            else:
+                print(f"× Installation failed: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            print(f"× Installation error: {e}")
+            return False
+    
+    def get_ollama_models(self) -> List[str]:
+        """Get available Ollama models"""
+        popular_models = [
+            "llama3.2:3b", "llama3.2:1b", "llama3.1:8b", "llama3.1:70b",
+            "llama3:8b", "llama3:70b", "mistral:7b", "mistral:latest",
+            "codellama:7b", "codellama:13b", "phi3:mini", "phi3:medium",
+            "gemma2:2b", "gemma2:9b", "qwen2.5:7b", "qwen2.5:14b",
+            "deepseek-coder:6.7b", "codegemma:7b", "nomic-embed-text"
+        ]
+        
+        try:
+            result = subprocess.run(
+                ["ollama", "list"], capture_output=True, text=True, check=True, timeout=10
+            )
+            
+            installed_models = []
+            lines = result.stdout.strip().split('\n')[1:]
+            for line in lines:
+                if line.strip():
+                    parts = line.split()
+                    if parts:
+                        model_name = parts[0]
+                        installed_models.append(f"● {model_name} (installed)")
+            
+            all_models = installed_models.copy()
+            for model in popular_models:
+                if not any(model in installed for installed in installed_models):
+                    all_models.append(f"○ {model} (available)")
+                    
+            return all_models if all_models else [f"○ {m} (available)" for m in popular_models]
+            
+        except:
+            return [f"○ {m} (available)" for m in popular_models]
+    
+    def get_llamacpp_models(self) -> List[str]:
+        """Get available llama.cpp models"""
+        models = [
+            "○ llama-3.2-3b-instruct.gguf",
+            "○ llama-3.2-1b-instruct.gguf", 
+            "○ llama-3.1-8b-instruct.gguf",
+            "○ mistral-7b-instruct.gguf",
+            "○ codellama-7b-instruct.gguf",
+            "○ phi-3-mini-4k-instruct.gguf",
+            "○ gemma-2-2b-it.gguf",
+            "○ qwen2.5-7b-instruct.gguf"
+        ]
+        
+        # Check for locally available models
+        model_dirs = [
+            os.path.expanduser("~/models"),
+            "./models",
+            "/opt/models"
+        ]
+        
+        local_models = []
+        for model_dir in model_dirs:
+            if os.path.exists(model_dir):
+                gguf_files = glob.glob(os.path.join(model_dir, "*.gguf"))
+                for gguf_file in gguf_files:
+                    filename = os.path.basename(gguf_file)
+                    local_models.append(f"● {filename} (local)")
+        
+        return local_models + models
+    
+    def get_gguf_models(self) -> List[str]:
+        """Get available GGUF models from local directories"""
+        model_dirs = [
+            os.path.expanduser("~/models"),
+            os.path.expanduser("~/.cache/huggingface"),
+            "./models",
+            "/opt/models"
+        ]
+        
+        found_models = []
+        
+        for model_dir in model_dirs:
+            if os.path.exists(model_dir):
+                gguf_files = glob.glob(os.path.join(model_dir, "**/*.gguf"), recursive=True)
+                for gguf_file in gguf_files:
+                    rel_path = os.path.relpath(gguf_file, model_dir)
+                    found_models.append(f"● {rel_path}")
+        
+        if not found_models:
+            found_models = [
+                "× No GGUF models found",
+                "→ Place .gguf files in ~/models/ directory",
+                "→ Or specify custom path with --model-path"
+            ]
+        
+        return found_models
+    
+    def get_models_for_backend(self, backend: str) -> List[str]:
+        """Get models for specified backend"""
+        if backend == "ollama":
+            return self.get_ollama_models()
+        elif backend == "llama_cpp":
+            return self.get_llamacpp_models()
+        elif backend == "gguf":
+            return self.get_gguf_models()
+        else:
+            return []
+    
+    def clean_model_name(self, model_selection: str) -> str:
+        """Clean model name from selection"""
+        # Remove status indicators and extra info
+        model = model_selection
+        for prefix in ["● ", "○ ", "× ", "→ "]:
+            model = model.replace(prefix, "")
+        
+        # Remove status suffixes
+        for suffix in [" (installed)", " (available)", " (local)"]:
+            model = model.replace(suffix, "")
+        
+        return model.strip()
 
 
 class MenuSelector:
-    """Factory class for different menu selection methods"""
+    """Simple pyfzf-based menu selector"""
     
     def __init__(self):
-        self.console = Console() if HAS_RICH else None
-        
-    def get_available_methods(self) -> List[str]:
-        """Get list of available selection methods"""
-        methods = []
-        if HAS_PROMPT_TOOLKIT:
-            methods.append("prompt-toolkit")
-        if HAS_INQUIRER:
-            methods.append("inquirer")
-        if HAS_PYFZF:
-            methods.append("pyfzf")
-        if HAS_RICH:
-            methods.append("rich")
-        methods.append("simple")  # Always available
-        return methods
-    
-    def select_with_prompt_toolkit(self, options: List[str], title: str) -> Optional[str]:
-        """Use prompt-toolkit for selection - creates a beautiful dropdown"""
-        if not HAS_PROMPT_TOOLKIT:
-            return None
-            
-        # Convert options to radiolist format
-        values = []
-        for i, option in enumerate(options):
-            # Highlight installed models
-            display_text = option
-            if "(installed)" in option:
-                display_text = f"✓ {option}"
-            values.append((option, display_text))
-        
-        # Custom style for better appearance
-        style = Style.from_dict({
-            'dialog': 'bg:#88ff88',
-            'dialog frame.label': 'bg:#ffffff #000000',
-            'dialog.body': 'bg:#000000 #00aa00',
-            'dialog shadow': 'bg:#00aa00',
-            'radio-list': 'bg:#000000',
-            'radio-checked': 'bg:#bf7130',
-            'radio-selected': 'bg:#0000aa #ffffff',
-        })
-        
-        try:
-            result = radiolist_dialog(
-                title=f"🤖 {title}",
-                text="Use arrow keys to navigate, Space to select, Enter to confirm:",
-                values=values,
-                style=style
-            ).run()
-            return result
-        except Exception as e:
-            print(f"Prompt-toolkit error: {e}")
-            return None
-    
-    def select_with_inquirer(self, options: List[str], title: str) -> Optional[str]:
-        """Use inquirer for selection - clean list selector"""
-        if not HAS_INQUIRER:
-            return None
-            
-        try:
-            questions = [
-                inquirer.List(
-                    'selection',
-                    message=title,
-                    choices=options,
-                    carousel=True  # Wrap around at the end
-                )
-            ]
-            answers = inquirer.prompt(questions)
-            return answers['selection'] if answers else None
-        except Exception as e:
-            print(f"Inquirer error: {e}")
-            return None
-    
-    def select_with_pyfzf(self, options: List[str], title: str) -> Optional[str]:
-        """Use pyfzf wrapper - better fzf integration"""
         if not HAS_PYFZF:
-            return None
-            
+            raise ImportError("pyfzf is required. Install with: pip install pyfzf")
+        self.fzf = FzfPrompt()
+    
+    def select_backend(self) -> Optional[str]:
+        """Select backend using fzf"""
+        backend_manager = BackendManager()
+        options = backend_manager.get_backend_options()
+        
         try:
-            fzf = FzfPrompt()
-            selected = fzf.prompt(
+            selected = self.fzf.prompt(
                 options,
-                '--prompt="🤖 {}: " --height=60% --reverse --border --info=inline'.format(title)
+                '--prompt="► Select Backend: " --height=40% --reverse --border --info=inline --header="Choose your preferred backend engine"'
             )
-            return selected[0] if selected else None
-        except Exception as e:
-            print(f"PyFZF error: {e}")
-            return None
-    
-    def select_with_rich(self, options: List[str], title: str) -> Optional[str]:
-        """Use rich for beautiful terminal selection"""
-        if not HAS_RICH or not self.console:
+            
+            if selected:
+                backend = backend_manager.parse_backend_selection(selected[0])
+                
+                # Check if llama.cpp needs installation
+                if backend == "llama_cpp":
+                    status = backend_manager.backends["llama_cpp"]["status"]
+                    if status == "WILL INSTALL":
+                        print("\nllama.cpp not found. Installing...")
+                        model_manager = ModelManager()
+                        if not model_manager.install_llamacpp():
+                            print("Failed to install llama.cpp. Please install manually:")
+                            print("pip install llama-cpp-python")
+                            return None
+                        print("✓ llama.cpp ready")
+                
+                return backend
             return None
             
+        except Exception as e:
+            print(f"Backend selection failed: {e}")
+            return None
+    
+    def select_model(self, backend: str) -> Optional[str]:
+        """Select model for given backend using fzf"""
+        model_manager = ModelManager()
+        models = model_manager.get_models_for_backend(backend)
+        
+        if not models:
+            print(f"No models available for backend: {backend}")
+            return None
+        
+        backend_names = {
+            "ollama": "Ollama",
+            "llama_cpp": "Llama.cpp", 
+            "gguf": "GGUF"
+        }
+        
         try:
-            # Clear screen and show title
-            self.console.clear()
-            
-            # Create a beautiful panel for the title
-            title_panel = Panel(
-                Text(title, style="bold blue", justify="center"),
-                style="blue",
-                padding=(1, 2)
-            )
-            self.console.print(title_panel)
-            self.console.print()
-            
-            # Create table for options
-            table = Table(show_header=False, show_lines=True, expand=True)
-            table.add_column("", style="cyan", no_wrap=True, width=4)
-            table.add_column("Model", style="white")
-            table.add_column("Status", style="green")
-            
-            for i, option in enumerate(options, 1):
-                if "(installed)" in option:
-                    clean_option = option.replace(" (installed)", "")
-                    table.add_row(str(i), clean_option, "✓ Installed")
-                else:
-                    table.add_row(str(i), option, "Available")
-            
-            self.console.print(table)
-            self.console.print()
-            
-            # Get user selection
-            choice = Prompt.ask(
-                "[bold cyan]Select model[/bold cyan]",
-                choices=[str(i) for i in range(1, len(options) + 1)] + ['q'],
-                default="1"
+            selected = self.fzf.prompt(
+                models,
+                f'--prompt="► Select {backend_names.get(backend, backend)} Model: " --height=60% --reverse --border --info=inline --header="Choose your model"'
             )
             
-            if choice == 'q':
-                return None
-            
-            return options[int(choice) - 1]
+            if selected:
+                return model_manager.clean_model_name(selected[0])
+            return None
             
         except Exception as e:
-            print(f"Rich error: {e}")
+            print(f"Model selection failed: {e}")
             return None
-    
-    def select_with_simple(self, options: List[str], title: str) -> Optional[str]:
-        """Fallback simple selection menu"""
-        print(f"\n🤖 {title}")
-        print("═" * 60)
-        
-        for i, option in enumerate(options, 1):
-            if "(installed)" in option:
-                print(f"{i:2}. \033[32m{option}\033[0m")
-            else:
-                print(f"{i:2}. {option}")
-        
-        print("═" * 60)
-        
-        while True:
-            try:
-                choice = input("Enter number (or 'q' to quit): ").strip()
-                
-                if choice.lower() == 'q':
-                    return None
-                
-                idx = int(choice) - 1
-                if 0 <= idx < len(options):
-                    return options[idx]
-                else:
-                    print(f"Please enter a number between 1 and {len(options)}")
-                    
-            except ValueError:
-                print("Please enter a valid number")
-            except KeyboardInterrupt:
-                print("\nCancelled")
-                return None
-    
-    def select(self, options: List[str], title: str, method: str = "auto") -> Optional[str]:
-        """Select from options using specified method"""
-        if not options:
+
+
+def get_backend_and_model_selection() -> Optional[Tuple[str, str]]:
+    """Interactive backend and model selection"""
+    try:
+        if not HAS_PYFZF:
+            print("× pyfzf is required for interactive selection")
+            print("→ Install with: pip install pyfzf")
             return None
-            
-        if method == "auto":
-            # Auto-select best available method
-            available = self.get_available_methods()
-            if "prompt-toolkit" in available:
-                method = "prompt-toolkit"
-            elif "inquirer" in available:
-                method = "inquirer" 
-            elif "rich" in available:
-                method = "rich"
-            elif "pyfzf" in available:
-                method = "pyfzf"
-            else:
-                method = "simple"
         
-        print(f"📋 Using {method} selector...")
+        selector = MenuSelector()
         
-        if method == "prompt-toolkit":
-            return self.select_with_prompt_toolkit(options, title)
-        elif method == "inquirer":
-            return self.select_with_inquirer(options, title)
-        elif method == "pyfzf":
-            return self.select_with_pyfzf(options, title)
-        elif method == "rich":
-            return self.select_with_rich(options, title)
-        else:
-            return self.select_with_simple(options, title)
-
-
-# Installation helper
-def install_menu_dependencies():
-    """Helper to install menu dependencies"""
-    packages = {
-        "prompt-toolkit": "prompt-toolkit",
-        "inquirer": "inquirer", 
-        "pyfzf": "pyfzf",
-        "rich": "rich"
-    }
-    
-    print("🚀 Available enhanced menu options:")
-    print("Install any of these for better dropdown experience:")
-    print()
-    
-    for name, package in packages.items():
-        status = "✓ Installed" if globals().get(f"HAS_{name.replace('-', '_').upper()}") else "❌ Not installed"
-        print(f"  {status} - {name}: pip install {package}")
-    
-    print()
-    print("💡 Recommendation: pip install prompt-toolkit (best dropdown experience)")
-
-
-# Updated functions using the new selector
-def get_available_ollama_models() -> List[str]:
-    """Get list of available Ollama models from their registry"""
-    popular_models = [
-        "llama3.2:3b", "llama3.2:1b", "llama3.1:8b", "llama3.1:70b",
-        "llama3:8b", "llama3:70b", "mistral:7b", "mistral:latest",
-        "codellama:7b", "codellama:13b", "phi3:mini", "phi3:medium",
-        "gemma2:2b", "gemma2:9b", "qwen2.5:7b", "qwen2.5:14b",
-        "deepseek-coder:6.7b", "codegemma:7b", "nomic-embed-text", "all-minilm:latest"
-    ]
-    
-    try:
-        result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, check=True, timeout=10
-        )
+        # Step 1: Select backend
+        print("► Step 1: Select Backend Engine")
+        backend = selector.select_backend()
         
-        installed_models = []
-        lines = result.stdout.strip().split('\n')[1:]
-        for line in lines:
-            if line.strip():
-                parts = line.split()
-                if parts:
-                    model_name = parts[0]
-                    installed_models.append(f"{model_name} (installed)")
+        if not backend:
+            print("× No backend selected")
+            return None
         
-        all_models = installed_models.copy()
-        for model in popular_models:
-            if not any(model in installed for installed in installed_models):
-                all_models.append(model)
-                
-        return all_models if all_models else popular_models
+        print(f"✓ Selected backend: {backend}")
         
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return popular_models
-
-
-def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Optional[str]:
-    """Select model using advanced dropdown"""
-    selector = MenuSelector()
-    
-    if method == "auto":
-        available_methods = selector.get_available_methods()
-        if len(available_methods) == 1 and available_methods[0] == "simple":
-            print("💡 For better dropdown experience, try:")
-            install_menu_dependencies()
-            print()
-    
-    if backend == "ollama":
-        models = get_available_ollama_models()
-        title = "Select Ollama Model"
-    else:
-        print(f"Backend {backend} not implemented yet")
-        return None
-    
-    if not models:
-        print(f"No models available for {backend}")
-        return None
-    
-    selected = selector.select(models, title, method)
-    
-    if selected:
-        # Clean up the model name
-        clean_model = selected.replace(" (installed)", "")
-        print(f"✅ Selected: {clean_model}")
-        return clean_model
-    
-    return None
-
-
-# Integration function for your existing code
-def get_model_selection_advanced(method: str = "auto") -> Optional[Tuple[str, str]]:
-    """Enhanced model selection with dropdown alternatives"""
-    try:
-        # For now, assume ollama backend
-        backend = "ollama"
-        model = select_model_advanced(backend, method)
+        # Step 2: Select model for chosen backend
+        print(f"► Step 2: Select Model for {backend}")
+        model = selector.select_model(backend)
         
-        if model:
-            return backend, model
-        return None
+        if not model:
+            print("× No model selected")
+            return None
+        
+        print(f"✓ Selected model: {model}")
+        
+        return backend, model
         
     except KeyboardInterrupt:
-        print("\n👋 Selection cancelled")
+        print("\nSelection cancelled")
         return None
+    except Exception as e:
+        print(f"× Selection failed: {e}")
+        return None
+
+
+# Legacy compatibility functions
+def get_model_selection_advanced(method: str = "pyfzf") -> Optional[Tuple[str, str]]:
+    """Legacy function for backwards compatibility"""
+    return get_backend_and_model_selection()
+
+
+def select_model_advanced(backend: str = "ollama", method: str = "pyfzf") -> Optional[str]:
+    """Legacy function for backwards compatibility"""
+    if not HAS_PYFZF:
+        print("× pyfzf is required")
+        return None
+    
+    selector = MenuSelector()
+    return selector.select_model(backend)
 
 
 if __name__ == "__main__":
-    # Test the enhanced selection
-    print("🎯 Testing Enhanced Model Selection")
+    # Test the selection system
+    print("Testing Backend and Model Selection")
     print("=" * 50)
     
-    # Show available methods
-    selector = MenuSelector()
-    methods = selector.get_available_methods()
-    print(f"Available selection methods: {', '.join(methods)}")
-    print()
-    
-    # Test selection
-    result = get_model_selection_advanced()
+    result = get_backend_and_model_selection()
     if result:
         backend, model = result
-        print(f"\n🎉 Ready to use {model} with {backend}!")
+        print(f"\n✓ Ready to use {model} with {backend}!")
     else:
-        print("\n❌ No model selected")
+        print("\n× No selection made")
