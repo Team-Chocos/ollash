@@ -5,7 +5,9 @@ import time
 import threading
 import re
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress, get_os_label
+
 from ollash.history import HistoryLogger
+from ollash.menu_advanced import get_model_selection_advanced
 
 try:
     import readline
@@ -371,27 +373,48 @@ def print_history_entries(entries, title="Recent History"):
     print_box_line(style="bottom", width=70)
     print()
 
-
-def main(model=None):
+def main(model=None, backend=None):
     """Main REPL shell function with semantic search"""
-    model = model or "llama3"
     history = HistoryLogger(model)  # Pass model to history logger
+
     
-    # Initial setup
+    
+    # Interactive model selection if no model specified
+    if not model:
+        print("🤖 No model specified, starting interactive selection...")
+        selection = get_model_selection_advanced(method="pyfzf")
+        
+        if not selection:
+            print("❌ No model selected. Exiting...")
+            retur
+        
+        backend, model = selection
+    else:
+        # Default to ollama if backend not specified
+        backend = backend or "ollama"
+    
+    print(f"\n🚀 Starting Ollash with {model} on {backend}")
+    
+    # Initial setup based on backend
     try:
-        ensure_ollama_ready()
-        if not is_model_installed(model):
-            animation = ThinkingAnimation("Installing model")
-            animation.start()
-            pull_model_with_progress(model)
-            animation.stop()
+        if backend == "ollama":
+            ensure_ollama_ready()
+            if not is_model_installed(model):
+                animation = ThinkingAnimation("Installing model")
+                animation.start()
+                pull_model_with_progress(model)
+                animation.stop()
+        elif backend == "llama-cpp":
+            # Setup llama.cpp if needed
+            setup_llamacpp(model)
+            
     except Exception as e:
         print_status(f"Setup failed: {e}", "error", in_box=False)
         return
 
     # Welcome screen
     clear_screen()
-    print_banner(model)
+    print_banner(f"{model} ({backend})")
     print()
     print_status("Ready! AI shell with semantic search enabled", "success", in_box=False)
     print_status("Type ':help' for commands", "info", in_box=False)
@@ -606,3 +629,22 @@ def main(model=None):
         print(f"│ Model stopped")
     except:
         pass
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run Ollash REPL Shell"
+    )
+    parser.add_argument(
+        "--model", type=str, help="Model name to use (e.g., llama3:8b)"
+    )
+    parser.add_argument(
+        "--backend", type=str, choices=["ollama", "llama-cpp"], help="Backend to use"
+    )
+
+    args = parser.parse_args()
+
+    # Run the shell with optional model/backend
+    main(model=args.model, backend=args.backend)

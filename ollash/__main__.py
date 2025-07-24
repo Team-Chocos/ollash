@@ -32,7 +32,11 @@ def main():
     args = parser.parse_args()
 
     if args.command == "shell":
-        shell_main(model=args.model)
+        if "--model" in sys.argv:
+            shell_main(model=args.model)
+        else:
+            shell_main(model=None)
+
     elif args.command == "run":
         ensure_ollama_ready()
         run_nl_to_bash(" ".join(args.prompt), autostop=args.autostop, model=args.model)
