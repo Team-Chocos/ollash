@@ -309,7 +309,7 @@ def print_status(message, status_type="info", in_box=True):
         "error": "✗",
         "suggestion": "→",
         "executing": "⚡",
-        "context": "🔍",
+        "context": "",
         "embedding": "🧠"
     }
     symbol = symbols.get(status_type, "ℹ")
