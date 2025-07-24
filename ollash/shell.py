@@ -6,6 +6,13 @@ import time
 import threading
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress, get_os_label
 
+# Try to import readline for better input editing
+try:
+    import readline
+    HAS_READLINE = True
+except ImportError:
+    HAS_READLINE = False
+
 
 class ThinkingAnimation:
     """Animated thinking indicator"""
@@ -35,6 +42,21 @@ class ThinkingAnimation:
             print(f"\r{frame} {self.message}...", end='', flush=True)
             self.current_frame = (self.current_frame + 1) % len(self.frames)
             time.sleep(0.1)
+
+
+def input_with_prefill(prompt, prefill=''):
+    """Input function that prefills the input with given text"""
+    if HAS_READLINE and prefill:
+        def startup_hook():
+            readline.insert_text(prefill)
+        readline.set_startup_hook(startup_hook)
+        try:
+            return input(prompt)
+        finally:
+            readline.set_startup_hook(None)
+    else:
+        # Fallback for systems without readline - just use regular input
+        return input(prompt)
 
 
 def animate_arrow():
@@ -327,12 +349,12 @@ def main(model=None):
                             break
                         elif choice in ['e', 'edit']:
                             try:
-                                edited_command = input(f"│ Edit [{command}] ❯ ").strip()
+                                edited_command = input_with_prefill("│ Edit ❯ ", command).strip()
                                 if edited_command:
                                     command = edited_command
-                                print_execution_start(command)
-                                success = execute_command(command)
-                                print_execution_result(success)
+                                    print_execution_start(command)
+                                    success = execute_command(command)
+                                    print_execution_result(success)
                                 break
                             except (EOFError, KeyboardInterrupt):
                                 print("\n│ Cancelled")
