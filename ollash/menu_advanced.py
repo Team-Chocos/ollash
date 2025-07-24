@@ -283,12 +283,22 @@ def install_menu_dependencies():
 def get_available_ollama_models() -> List[str]:
     """Get list of available Ollama models from their registry"""
     popular_models = [
-        "llama3.2:3b", "llama3.2:1b", "llama3.1:8b", "llama3.1:70b",
-        "llama3:8b", "llama3:70b", "mistral:7b", "mistral:latest",
-        "codellama:7b", "codellama:13b", "phi3:mini", "phi3:medium",
-        "gemma2:2b", "gemma2:9b", "qwen2.5:7b", "qwen2.5:14b",
-        "deepseek-coder:6.7b", "codegemma:7b", "nomic-embed-text", "all-minilm:latest"
+        "llama3.3", "llama3.2", "llama3.2:1b", "llama3.2:3b",
+        "llama3.1", "llama3.1:405b", "llama3", "llama2", "llama2-uncensored", "llama2:13b", "llama2:70b", "llama4",
+        "gemma3", "gemma2",
+        "qwen3", "qwen2.5", "qwen2", "qwen",
+        "phi4", "phi4-mini", "phi3", "phi",
+        "mistral", "mistral-nemo",
+        "deepseek-v3", "deepseek-coder", "deepseek-coder-v2",  # coder models also support instruction-following
+        "dolphin3", "dolphin-llama3", "dolphin-mixtral",
+        "mixtral", "command-r", "command-r-plus",
+        "granite3.3", "granite3.2",
+        "smollm2", "smollm", "tinyllama",
+        "codegemma", "codellama",  # still usable as chat models
+        "neural-chat", "starcoder2", "starling-lm", "wizardlm2",
+        "devstral", "llama3-chatqa", "codeqwen", "aya", "stablelm2"
     ]
+
     
     try:
         result = subprocess.run(
