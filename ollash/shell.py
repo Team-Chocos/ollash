@@ -1,12 +1,11 @@
 # ollash/shell.py
 import subprocess
-# import sys
 import os
 import time
 import threading
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress, get_os_label
+from ollash.history import HistoryLogger
 
-# Try to import readline for better input editing
 try:
     import readline
     HAS_READLINE = True
@@ -251,6 +250,7 @@ def print_execution_result(success):
 def main(model=None):
     """Main REPL shell function"""
     model = model or "llama3"
+    history = HistoryLogger()
     
     # Initial setup
     try:
@@ -325,6 +325,7 @@ def main(model=None):
                 print_execution_start(command)
                 success = execute_command(command)
                 print_execution_result(success)
+                history.log(user_input, command, "success" if success else "failure", os.getcwd())
                 continue
 
             # Get command suggestion
@@ -346,6 +347,7 @@ def main(model=None):
                             print_execution_start(command)
                             success = execute_command(command)
                             print_execution_result(success)
+                            history.log(user_input, command, "success" if success else "failure", os.getcwd())
                             break
                         elif choice in ['e', 'edit']:
                             try:
@@ -355,6 +357,7 @@ def main(model=None):
                                     print_execution_start(command)
                                     success = execute_command(command)
                                     print_execution_result(success)
+                                    history.log(user_input, command, "success" if success else "failure", os.getcwd())
                                 break
                             except (EOFError, KeyboardInterrupt):
                                 print("\n│ Cancelled")
@@ -386,3 +389,5 @@ def main(model=None):
         print(f"│ Model stopped")
     except:
         pass
+
+
