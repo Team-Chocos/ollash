@@ -5,7 +5,6 @@ import os
 import time
 import threading
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress, get_os_label
-from ollash.menu import get_model_selection
 from ollash.menu_advanced import get_model_selection_advanced
 
 # Try to import readline for better input editing
