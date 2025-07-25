@@ -55,6 +55,8 @@ class HistoryLogger:
 
     def _get_embedding(self, text: str, model: str = "llama3") -> Optional[np.ndarray]:
         """Get embedding for text using the embedding manager"""
+        if self.embedding_manager is None:
+            return None
         return self.embedding_manager.get_embedding(text)
 
     def _serialize_embedding(self, embedding: np.ndarray) -> bytes:
@@ -104,25 +106,33 @@ class HistoryLogger:
                 # Wait for embedding tasks with timeout
                 record_id, combined_text, model = self.embedding_queue.get(timeout=1.0)
                 
-                # Generate embedding
-                embedding = self._get_embedding(combined_text, model)
-                
-                if embedding is not None:
-                    embedding_blob = self._serialize_embedding(embedding)
+                # Generate embedding with proper error handling
+                try:
+                    embedding = self._get_embedding(combined_text, model)
+
+                    if embedding is not None:
+                        embedding_blob = self._serialize_embedding(embedding)
+
+                        # Update the record with the embedding
+                        with sqlite3.connect(self.db_path) as conn:
+                            conn.execute("""
+                                UPDATE history SET embedding = ? WHERE id = ?
+                            """, (embedding_blob, record_id))
+                    else:
+                        # Log when embedding generation returns None
+                        print(f"Warning: No embedding generated for text: '{combined_text[:50]}...'")
                     
-                    # Update the record with the embedding
-                    with sqlite3.connect(self.db_path) as conn:
-                        conn.execute("""
-                            UPDATE history SET embedding = ? WHERE id = ?
-                        """, (embedding_blob, record_id))
+                except Exception as e:
+                    print(f"Warning: Failed to generate embedding for record {record_id}: {e}")
                 
+                # Always mark task as done after attempting to process
                 self.embedding_queue.task_done()
                 
             except queue.Empty:
                 continue  # Timeout, check shutdown flag and continue
             except Exception as e:
                 # Log error but don't crash the thread
-                print(f"Warning: Failed to generate embedding: {e}")
+                print(f"Warning: Failed to process embedding task: {e}")
                 try:
                     self.embedding_queue.task_done()
                 except:

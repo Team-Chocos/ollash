@@ -12,7 +12,7 @@ class EmbeddingManager:
     """Advanced embedding management for better semantic search"""
     
     def __init__(self, model: str = "llama3"):
-        self.model = model
+        self.model = model if model else "llama3"  # Ensure model is not None
         self.cache_dir = Path.home() / ".ollash" / "embeddings_cache"
         self.cache_dir.mkdir(exist_ok=True)
     
@@ -80,9 +80,12 @@ class EmbeddingManager:
             np.save(cache_file, embedding)
         except Exception:
             pass  # Silently fail caching
-    
+
     def _get_ollama_embedding(self, text: str) -> Optional[np.ndarray]:
         """Get embedding using Ollama (if available)"""
+        if not text or not isinstance(text, str):
+            return None
+            
         try:
             # Try to use ollama embeddings API if available
             result = subprocess.run([
@@ -97,11 +100,14 @@ class EmbeddingManager:
                         return np.array(response['embedding'], dtype=np.float32)
                 except json.JSONDecodeError:
                     pass
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, TypeError):
             pass
         
         # Fallback: use the model to generate a pseudo-embedding
         try:
+            if not self.model:  # Add this check
+                return None
+                
             prompt = f"Convert this text to a numerical representation (space-separated numbers): {text}"
             result = subprocess.run([
                 "ollama", "run", self.model, prompt
@@ -113,7 +119,7 @@ class EmbeddingManager:
                 if len(numbers) >= 8:  # Minimum viable embedding size
                     embedding = np.array([float(n) for n in numbers[:128]], dtype=np.float32)  # Cap at 128 dims
                     return embedding / np.linalg.norm(embedding)  # Normalize
-        except Exception:
+        except (subprocess.TimeoutExpired, FileNotFoundError, TypeError, ValueError):
             pass
         
         return None

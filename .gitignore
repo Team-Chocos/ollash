@@ -1,4 +1,5 @@
 # Python build artifacts
+.gitignore/
 *.egg-info/
 dist/
 build/
@@ -7,3 +8,4 @@ __pycache__/
 commands.txt
 rag_datastore/
 .vscode/
+progress.txt

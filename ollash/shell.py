@@ -381,12 +381,11 @@ def main(model=None, backend=None):
     
     # Interactive model selection if no model specified
     if not model:
-        print("🤖 No model specified, starting interactive selection...")
         selection = get_model_selection_advanced(method="pyfzf")
         
         if not selection:
             print("❌ No model selected. Exiting...")
-            retur
+            return
         
         backend, model = selection
     else:
@@ -520,12 +519,20 @@ def main(model=None, backend=None):
             elif user_input.startswith(":search "):
                 query = user_input[8:].strip()
                 if query:
-                    similar_entries = history.search_similar(query, limit=5, model=model)
-                    if similar_entries:
-                        entries = [entry for entry, _ in similar_entries]
-                        print_history_entries(entries, f"Search Results for '{query}'")
-                    else:
-                        print_status(f"No matches found for '{query}'", "info", in_box=False)
+                    try:
+                        animation = ThinkingAnimation("Retrieving context")
+                        animation.start()
+                        similar_entries = history.search_similar(query, limit=5, model=model)
+                        animation.stop()
+                        
+                        if similar_entries:
+                            entries = [entry for entry, _ in similar_entries]
+                            print_history_entries(entries, f"Search Results for '{query}'")
+                        else:
+                            print_status(f"No matches found for '{query}'", "info", in_box=False)
+                    except Exception as e:
+                        animation.stop()
+                        print_status(f"Search error: {e}", "error", in_box=False)
                 else:
                     print_status("Please provide a search query", "error", in_box=False)
                 continue
@@ -630,21 +637,3 @@ def main(model=None, backend=None):
     except:
         pass
 
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Run Ollash REPL Shell"
-    )
-    parser.add_argument(
-        "--model", type=str, help="Model name to use (e.g., llama3:8b)"
-    )
-    parser.add_argument(
-        "--backend", type=str, choices=["ollama", "llama-cpp"], help="Backend to use"
-    )
-
-    args = parser.parse_args()
-
-    # Run the shell with optional model/backend
-    main(model=args.model, backend=args.backend)
