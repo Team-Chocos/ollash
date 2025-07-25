@@ -302,7 +302,7 @@ def get_available_ollama_models() -> List[str]:
     
     try:
         result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, check=True, timeout=10
+            ["ollama", "list"], capture_output=True, text=True, check=True, timeout=10, encoding="utf-8", errors="ignore"
         )
         
         installed_models = []

@@ -260,7 +260,7 @@ def cleanup(history, model):
         history.shutdown()
         animation = ThinkingAnimation(f"Stopping model: {model}")
         animation.start()
-        subprocess.run(["ollama", "stop", model], capture_output=True)
+        subprocess.run(["ollama", "stop", model], capture_output=True, text=True, errors="ignore",encoding="utf-8")
         animation.stop()
         print(f"│ Model stopped")
     except:

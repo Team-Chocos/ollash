@@ -149,7 +149,7 @@ def get_command_suggestion(prompt: str, model: str) -> str:
 def execute_command(command: str) -> bool:
     """Execute a command and return True if successful"""
     try:
-        result = subprocess.run(command, shell=True)
+        result = subprocess.run(command, shell=True, text=True, encoding="utf-8", errors="ignore")
         return result.returncode == 0
     except KeyboardInterrupt:
         print("\n│ [Interrupted]")
