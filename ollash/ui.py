@@ -108,7 +108,7 @@ def print_status(message, status_type="info", in_box=True):
         "suggestion": "→",
         "executing": "⚡",
         "context": "",
-        "embedding": "🧠"
+        "embedding": ""
     }
     symbol = symbols.get(status_type, "ℹ")
     

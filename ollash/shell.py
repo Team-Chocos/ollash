@@ -25,14 +25,14 @@ def main(model=None):
         selection = get_model_selection_advanced(method="pyfzf")
         
         if not selection:
-            print("❌ No model selected. Exiting...")
+            print("No model selected. Exiting...")
             return
         
         backend, model = selection
     else:
         backend = "ollama"
     
-    print(f"\n🚀 Starting Ollash with {model} on {backend}")
+    print(f"\nStarting Ollash with {model} on {backend}")
     
     # Initial setup
     try:
@@ -230,7 +230,7 @@ def execute_with_confirmation(command, original_input, history, model):
                 print_execution_result(success)
                 history.log(original_input, command, "success" if success else "failure", 
                           os.getcwd(), model=model, generate_embedding=True)
-                print("│ \033[90m🧠 Learning from this command...\033[0m")
+                print("│[Learning from this command...")
                 break
             elif choice in ['e', 'edit']:
                 try:
@@ -242,7 +242,7 @@ def execute_with_confirmation(command, original_input, history, model):
                         print_execution_result(success)
                         history.log(original_input, command, "success" if success else "failure", 
                                   os.getcwd(), model=model, generate_embedding=True)
-                        print("│ \033[90m🧠 Learning from this command...\033[0m")
+                        print("│ [Learning from this command...")
                     break
                 except (EOFError, KeyboardInterrupt):
                     print("\n│ Cancelled")
