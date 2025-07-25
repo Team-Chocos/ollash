@@ -35,8 +35,8 @@ def get_contextual_command_suggestion(prompt: str, model: str, history) -> tuple
     # First, make a quick guess at what the command might be for better embedding
     potential_command = _quick_command_guess(prompt, os_label)
     
-    # Search for similar past entries
-    similar_entries = history.search_similar(prompt, potential_command, limit=3, model=model)
+    # Search for similar past entries (removed model parameter)
+    similar_entries = history.search_similar(prompt, potential_command, limit=3)
     
     # Build context from similar entries
     context = ""
@@ -72,19 +72,72 @@ Respond ONLY with the command, no explanation."""
             errors="ignore"
         )
 
+        if response.returncode != 0:
+            raise Exception(f"Ollama command failed with return code {response.returncode}")
+
         raw_output = response.stdout.strip()
         
-        # Extract command
-        match = re.search(r"`([^`]+)`", raw_output)
-        command = match.group(1).strip() if match else raw_output.strip().splitlines()[0]
+        if not raw_output:
+            raise Exception("Empty response from model")
         
-        # Clean up common formatting issues
-        command = command.replace("```", "").replace("bash", "").replace("sh", "").strip()
+        # Extract command with better error handling
+        command = _extract_command(raw_output)
+        
+        if not command:
+            raise Exception("Could not extract valid command from response")
         
         return command, context
         
     except Exception as e:
         raise Exception(f"Failed to get command suggestion: {e}")
+
+
+def _extract_command(raw_output: str) -> str:
+    """Extract command from model output with robust parsing"""
+    if not raw_output or not raw_output.strip():
+        return ""
+    
+    # Try to find command in backticks first
+    match = re.search(r"`([^`]+)`", raw_output)
+    if match:
+        command = match.group(1).strip()
+        if command:
+            return _clean_command(command)
+    
+    # Try to find command in code blocks
+    code_block_match = re.search(r"```(?:bash|sh|shell)?\n?([^`]+)```", raw_output, re.MULTILINE)
+    if code_block_match:
+        command = code_block_match.group(1).strip()
+        if command:
+            return _clean_command(command)
+    
+    # Fall back to first non-empty line
+    lines = raw_output.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):  # Skip comments
+            return _clean_command(line)
+    
+    return ""
+
+
+def _clean_command(command: str) -> str:
+    """Clean up common formatting issues in commands"""
+    if not command:
+        return ""
+    
+    # Remove common prefixes and formatting
+    command = command.strip()
+    command = re.sub(r'^(bash|sh|shell|\$)\s*', '', command)
+    command = command.replace("```", "").strip()
+    
+    # Remove leading $ or # if present
+    if command.startswith(('$ ', '# ')):
+        command = command[2:]
+    elif command.startswith(('$', '#')):
+        command = command[1:]
+    
+    return command.strip()
 
 
 def _quick_command_guess(prompt: str, os_label: str) -> str:
@@ -106,7 +159,7 @@ def _quick_command_guess(prompt: str, os_label: str) -> str:
         return "mv" if os_label != "Windows" else "move"
     elif "delete" in prompt_lower or "remove" in prompt_lower:
         return "rm" if os_label != "Windows" else "del"
-    elif "find" in prompt_lower or "search" in prompt_lower:
+    elif "find" in prompt_lower or "search" in prompt_lower or "where" in prompt_lower:
         return "find" if os_label != "Windows" else "findstr"
     elif "install" in prompt_lower:
         return "apt install" if os_label == "Linux" else "brew install" if os_label == "macOS" else "choco install"
@@ -115,7 +168,7 @@ def _quick_command_guess(prompt: str, os_label: str) -> str:
 
 
 def get_command_suggestion(prompt: str, model: str) -> str:
-    """Original command suggestion function for backward compatibility"""
+    """Original command suggestion function with improved error handling"""
     if not is_model_installed(model):
         pull_model_with_progress(model)
 
@@ -135,13 +188,22 @@ def get_command_suggestion(prompt: str, model: str) -> str:
             errors="ignore"
         )
 
+        if response.returncode != 0:
+            raise Exception(f"Ollama command failed with return code {response.returncode}")
+
         raw_output = response.stdout.strip()
         
-        # Extract command
-        match = re.search(r"`([^`]+)`", raw_output)
-        command = match.group(1).strip() if match else raw_output.strip().splitlines()[0]
+        if not raw_output:
+            raise Exception("Empty response from model")
+        
+        # Extract command with better error handling
+        command = _extract_command(raw_output)
+        
+        if not command:
+            raise Exception("Could not extract valid command from response")
         
         return command
+        
     except Exception as e:
         raise Exception(f"Failed to get command suggestion: {e}")
 
@@ -157,3 +219,45 @@ def execute_command(command: str) -> bool:
     except Exception as e:
         print(f"│ Error: {e}")
         return False
+
+
+def debug_ollama_status():
+    """Debug function to check Ollama status"""
+    try:
+        # Check if ollama is available
+        result = subprocess.run(["ollama", "--version"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return "Ollama not installed or not in PATH"
+        
+        # Check if ollama service is running
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            error = result.stderr.strip() if result.stderr else "Unknown error"
+            if "connection refused" in error.lower():
+                return "Ollama service is not running. Run 'ollama serve' in another terminal."
+            return f"Ollama service error: {error}"
+        
+        # Try a simple test command to see if the model actually works
+        try:
+            test_result = subprocess.run(
+                ["ollama", "run", "llama3:latest", "Say 'test' and nothing else"],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if test_result.returncode != 0:
+                error = test_result.stderr.strip() if test_result.stderr else "Unknown error"
+                return f"Model execution failed: {error}"
+            elif not test_result.stdout.strip():
+                return "Model returns empty responses - may need restart"
+            else:
+                return "Ollama is running correctly"
+        except subprocess.TimeoutExpired:
+            return "Model is responding very slowly - may need restart"
+        
+    except FileNotFoundError:
+        return "Ollama not installed"
+    except subprocess.TimeoutExpired:
+        return "Ollama is not responding (timeout)"
+    except Exception as e:
+        return f"Error checking Ollama: {e}"

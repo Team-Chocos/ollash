@@ -1,34 +1,56 @@
+#ollash/history.py
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-import json
 import os
 import numpy as np
-from typing import List, Tuple, Optional
-import subprocess
+from typing import List, Tuple, Dict, Any, Optional
 import threading
 import queue
-from ollash.embedding_utils import EmbeddingManager, calculate_command_similarity
+import faiss
+import pickle
+import time
 
-
-class HistoryLogger:
-    """Manage per-user command history with advanced semantic search in ~/.ollash/history.db"""
-    def __init__(self, model: str = "llama3"):
+class OptimizedHistoryLogger:
+    """Ultra-fast offline command history with llama3 embeddings and FAISS search"""
+    
+    def __init__(self):
+        # Initialize storage paths
         home = Path.home()
-        db_dir = home / ".ollash"
-        db_dir.mkdir(exist_ok=True)
-        self.db_path = db_dir / "history.db"
-        self.embedding_manager = EmbeddingManager(model)
+        self.db_dir = home / ".ollash"
+        self.db_dir.mkdir(exist_ok=True)
+        
+        # Database for metadata
+        self.db_path = self.db_dir / "history.db"
         self._init_db()
         
+        # Embeddings storage
+        self.embeddings_path = self.db_dir / "embeddings.faiss"
+        self.mapping_path = self.db_dir / "id_mapping.pkl"
+        
+        # FAISS index and ID mapping
+        self.faiss_index = None
+        self.id_to_idx = {}
+        self.idx_to_id = []
+        self._load_faiss_index()
+        
+        # Background processing
         self._shutdown = False
-        # Background embedding processing
-        self.embedding_queue = queue.Queue()
-        self.embedding_thread = threading.Thread(target=self._process_embeddings, daemon=True)
+        self.embedding_queue = queue.Queue(maxsize=1000)
+        self.embedding_thread = threading.Thread(
+            target=self._process_embeddings, 
+            daemon=True,
+            name="EmbeddingProcessor"
+        )
         self.embedding_thread.start()
+        
+        # Track pending embeddings
+        self.pending_embeddings = set()
 
     def _init_db(self):
+        """Initialize SQLite database with optimized schema"""
         with sqlite3.connect(self.db_path) as conn:
+            # Main history table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,201 +59,248 @@ class HistoryLogger:
                     generated_command TEXT,
                     execution_result TEXT,
                     cwd TEXT,
-                    tags TEXT,
-                    embedding BLOB
+                    tags TEXT
                 )
             """)
             
-            # Add new columns if they don't exist (for backward compatibility)
+            # Try to add has_embedding column if it doesn't exist
             try:
-                conn.execute("ALTER TABLE history ADD COLUMN tags TEXT")
+                conn.execute("ALTER TABLE history ADD COLUMN has_embedding INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
-                pass
+                pass  # Column already exists
+            
+            # Indexes for fast queries
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_timestamp 
+                ON history(timestamp DESC)
+            """)
             
             try:
-                conn.execute("ALTER TABLE history ADD COLUMN embedding BLOB")
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_embedding_flag 
+                    ON history(has_embedding) 
+                    WHERE has_embedding = 1
+                """)
             except sqlite3.OperationalError:
-                pass
+                pass  # Older SQLite might not support WHERE in index
+            
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_execution_result 
+                ON history(execution_result)
+            """)
 
-    def _get_embedding(self, text: str, model: str = "llama3") -> Optional[np.ndarray]:
-        """Get embedding for text using the embedding manager"""
-        if self.embedding_manager is None:
-            return None
-        return self.embedding_manager.get_embedding(text)
+    def _load_faiss_index(self):
+        """Load existing FAISS index or create new"""
+        try:
+            if self.embeddings_path.exists():
+                self.faiss_index = faiss.read_index(str(self.embeddings_path))
+                
+            if self.mapping_path.exists():
+                with open(self.mapping_path, 'rb') as f:
+                    self.id_to_idx, self.idx_to_id = pickle.load(f)
+            else:
+                self.id_to_idx = {}
+                self.idx_to_id = []
+                
+            if self.faiss_index is None:
+                # Initialize empty index (dimension will be set at first addition)
+                self.faiss_index = None
+                
+        except Exception as e:
+            print(f"Warning: Failed to load FAISS index: {e}")
+            self.faiss_index = None
+            self.id_to_idx = {}
+            self.idx_to_id = []
 
-    def _serialize_embedding(self, embedding: np.ndarray) -> bytes:
-        """Serialize numpy array to bytes for storage"""
-        return embedding.tobytes()
+    def _save_faiss_index(self):
+        """Persist FAISS index to disk"""
+        try:
+            if self.faiss_index is not None:
+                faiss.write_index(self.faiss_index, str(self.embeddings_path))
+            with open(self.mapping_path, 'wb') as f:
+                pickle.dump((self.id_to_idx, self.idx_to_id), f)
+        except Exception as e:
+            print(f"Warning: Failed to save FAISS index: {e}")
 
-    def _deserialize_embedding(self, blob: bytes) -> np.ndarray:
-        """Deserialize bytes back to numpy array"""
-        return np.frombuffer(blob, dtype=np.float32)
-
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
-        """Calculate cosine similarity between two vectors"""
-        dot_product = np.dot(a, b)
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        
-        return dot_product / (norm_a * norm_b)
-
-    def log(self, input_text: str, generated_command: str, execution_result: str, 
-            cwd: str = None, tags: str = None, model: str = "llama3", 
-            generate_embedding: bool = True):
-        """Log command with optional asynchronous embedding generation"""
+    def log(self, 
+            input_text: str, 
+            generated_command: str, 
+            execution_result: str,
+            cwd: str = None, 
+            tags: str = None,
+            generate_embedding: bool = True) -> int:
+        """Log a command with optional async embedding generation"""
         timestamp = datetime.utcnow().isoformat()
         cwd = cwd or os.getcwd()
         
-        # Insert the record immediately without embedding
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
-                INSERT INTO history (timestamp, input, generated_command, execution_result, cwd, tags, embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (timestamp, input_text, generated_command, execution_result, cwd, tags, None))
+                INSERT INTO history (
+                    timestamp, input, generated_command, 
+                    execution_result, cwd, tags, has_embedding
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (timestamp, input_text, generated_command, 
+                 execution_result, cwd, tags, 0))
             
             record_id = cursor.lastrowid
         
-        # Queue embedding generation for background processing if requested
         if generate_embedding:
             combined_text = f"{input_text} {generated_command}"
-            self.embedding_queue.put((record_id, combined_text, model))
-    
+            self.embedding_queue.put((record_id, combined_text))
+            self.pending_embeddings.add(record_id)
+            
+        return record_id
+
     def _process_embeddings(self):
-        """Background thread to process embedding generation"""
+        """Background thread for generating and storing embeddings"""
+        try:
+            from ollash.embedding_utils import EmbeddingManager
+        except ImportError:
+            print("Warning: embedding_utils not available, skipping embedding processing")
+            return
+        
+        embedding_manager = EmbeddingManager("llama3")
+        
         while not self._shutdown:
             try:
-                # Wait for embedding tasks with timeout
-                record_id, combined_text, model = self.embedding_queue.get(timeout=1.0)
+                record_id, combined_text = self.embedding_queue.get(timeout=1.0)
                 
-                # Generate embedding with proper error handling
                 try:
-                    embedding = self._get_embedding(combined_text, model)
-
+                    # Generate embedding (this is the slow part)
+                    start_time = time.time()
+                    embedding = embedding_manager.get_embedding(combined_text)
+                    
                     if embedding is not None:
-                        embedding_blob = self._serialize_embedding(embedding)
-
-                        # Update the record with the embedding
+                        # Convert to numpy array if needed
+                        embedding = np.array(embedding, dtype='float32').flatten()
+                        
+                        # Initialize FAISS index if this is our first embedding
+                        if self.faiss_index is None:
+                            dim = embedding.shape[0]
+                            self.faiss_index = faiss.IndexFlatIP(dim)
+                        
+                        # Add to FAISS index
+                        embedding = embedding.reshape(1, -1)
+                        faiss.normalize_L2(embedding)
+                        self.faiss_index.add(embedding)
+                        
+                        # Update ID mapping
+                        new_idx = len(self.idx_to_id)
+                        self.id_to_idx[record_id] = new_idx
+                        self.idx_to_id.append(record_id)
+                        
+                        # Mark as embedded in database
                         with sqlite3.connect(self.db_path) as conn:
                             conn.execute("""
-                                UPDATE history SET embedding = ? WHERE id = ?
-                            """, (embedding_blob, record_id))
-                    else:
-                        # Log when embedding generation returns None
-                        print(f"Warning: No embedding generated for text: '{combined_text[:50]}...'")
+                                UPDATE history 
+                                SET has_embedding = 1 
+                                WHERE id = ?
+                            """, (record_id,))
+                            
+                        # Periodically save index
+                        if len(self.idx_to_id) % 100 == 0:
+                            self._save_faiss_index()
+                            
+                    self.pending_embeddings.discard(record_id)
                     
                 except Exception as e:
-                    print(f"Warning: Failed to generate embedding for record {record_id}: {e}")
+                    print(f"Error generating embedding: {e}")
+                    self.pending_embeddings.discard(record_id)
                 
-                # Always mark task as done after attempting to process
-                self.embedding_queue.task_done()
-                
-            except queue.Empty:
-                continue  # Timeout, check shutdown flag and continue
-            except Exception as e:
-                # Log error but don't crash the thread
-                print(f"Warning: Failed to process embedding task: {e}")
-                try:
+                finally:
                     self.embedding_queue.task_done()
-                except:
-                    pass
+                    
+            except queue.Empty:
+                continue
 
-    def search_similar(self, query: str, potential_command: str = "", 
-                      limit: int = 5, model: str = "llama3") -> List[Tuple[dict, float]]:
-        """Search for similar past entries using advanced semantic similarity"""
-        # Create query embedding
+    def search_similar(self, 
+                      query: str, 
+                      potential_command: str = "", 
+                      limit: int = 5) -> List[Tuple[Dict, float]]:
+        """Fast semantic search with hybrid scoring"""
+        # Fallback if no embeddings exist
+        if self.faiss_index is None or not self.idx_to_id:
+            return self._text_search(query, limit)
+        
+        # Generate query embedding
+        try:
+            from ollash.embedding_utils import EmbeddingManager, calculate_command_similarity
+            embedding_manager = EmbeddingManager("llama3")
+        except ImportError:
+            print("Warning: embedding_utils not available, falling back to text search")
+            return self._text_search(query, limit)
+        
         search_text = f"{query} {potential_command}".strip()
-        query_embedding = self._get_embedding(search_text, model)
+        query_embedding = embedding_manager.get_embedding(search_text)
         
         if query_embedding is None:
-            # Fallback to text-based search
             return self._text_search(query, limit)
+            
+        query_embedding = np.array(query_embedding, dtype='float32').reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
         
+        # Search FAISS index
+        distances, indices = self.faiss_index.search(query_embedding, limit)
+        
+        # Retrieve metadata for results
         results = []
-        valid_embeddings = []
-        entries_data = []
-        
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT id, timestamp, input, generated_command, execution_result, cwd, tags, embedding
-                FROM history 
-                WHERE embedding IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT 100
-            """)
-            
-            for row in cursor.fetchall():
-                if row[7]:  # embedding exists
-                    try:
-                        stored_embedding = self._deserialize_embedding(row[7])
+            for idx, distance in zip(indices[0], distances[0]):
+                if idx == -1:
+                    continue
+                    
+                record_id = self.idx_to_id[idx]
+                cursor = conn.execute("""
+                    SELECT id, timestamp, input, generated_command, 
+                           execution_result, cwd, tags
+                    FROM history 
+                    WHERE id = ?
+                """, (record_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    entry = {
+                        'id': row[0],
+                        'timestamp': row[1],
+                        'input': row[2],
+                        'generated_command': row[3],
+                        'execution_result': row[4],
+                        'cwd': row[5],
+                        'tags': row[6]
+                    }
+                    
+                    # Calculate command structure similarity if available
+                    cmd_sim = 0
+                    if potential_command:
+                        try:
+                            cmd_sim = calculate_command_similarity(
+                                potential_command, 
+                                entry['generated_command']
+                            )
+                        except:
+                            cmd_sim = 0
+                    
+                    # Combined score (70% semantic, 30% structure)
+                    semantic_score = (1 - distance)  # Convert distance to similarity
+                    combined_score = 0.7 * semantic_score + 0.3 * cmd_sim
+                    
+                    # Boost successful commands
+                    if entry['execution_result'] == 'success':
+                        combined_score *= 1.1
                         
-                        # Check if embeddings have compatible dimensions
-                        if stored_embedding.shape != query_embedding.shape:
-                            continue  # Skip incompatible embeddings
-                            
-                        valid_embeddings.append(stored_embedding)
-                        
-                        entry = {
-                            'id': row[0],
-                            'timestamp': row[1],
-                            'input': row[2],
-                            'generated_command': row[3],
-                            'execution_result': row[4],
-                            'cwd': row[5],
-                            'tags': row[6]
-                        }
-                        entries_data.append(entry)
-                    except Exception as e:
-                        continue  # Skip corrupted embeddings
+                    results.append((entry, combined_score))
         
-        if not valid_embeddings:
-            return self._text_search(query, limit)
-        
-        # Compute similarities efficiently
-        try:
-            similarities = self.embedding_manager.compute_similarity_batch(
-                query_embedding, valid_embeddings
-            )
-        except Exception as e:
-            # Fallback to individual similarity computation
-            similarities = []
-            for embedding in valid_embeddings:
-                try:
-                    sim = self._cosine_similarity(query_embedding, embedding)
-                    similarities.append(sim)
-                except:
-                    similarities.append(0.0)
-        
-        # Combine results and add command structure similarity
-        for entry, similarity in zip(entries_data, similarities):
-            # Add command structure similarity bonus
-            cmd_similarity = calculate_command_similarity(
-                potential_command, entry['generated_command']
-            ) if potential_command else 0
-            
-            # Weighted combination of semantic and structural similarity
-            combined_similarity = 0.7 * similarity + 0.3 * cmd_similarity
-            
-            # Boost recent successful commands
-            if entry['execution_result'] == 'success':
-                combined_similarity *= 1.1
-            
-            results.append((entry, combined_similarity))
-        
-        # Sort by combined similarity and return top results
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:limit]
+        return sorted(results, key=lambda x: x[1], reverse=True)[:limit]
 
-    def _text_search(self, query: str, limit: int = 5) -> List[Tuple[dict, float]]:
-        """Fallback text-based search when embeddings are not available"""
+    def _text_search(self, query: str, limit: int = 5) -> List[Tuple[Dict, float]]:
+        """Fallback text-based search"""
         query_lower = query.lower()
         results = []
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
-                SELECT id, timestamp, input, generated_command, execution_result, cwd, tags
+                SELECT id, timestamp, input, generated_command, 
+                       execution_result, cwd, tags
                 FROM history 
                 ORDER BY timestamp DESC
                 LIMIT 50
@@ -241,24 +310,24 @@ class HistoryLogger:
                 input_text = row[2].lower()
                 command_text = row[3].lower()
                 
-                # Simple text matching score
+                # Simple text matching
                 score = 0.0
                 if query_lower in input_text:
                     score += 0.8
                 if query_lower in command_text:
                     score += 0.6
                 
-                # Word overlap scoring
+                # Word overlap
                 query_words = set(query_lower.split())
                 input_words = set(input_text.split())
-                command_words = set(command_text.split())
+                cmd_words = set(command_text.split())
                 
-                input_overlap = len(query_words.intersection(input_words)) / max(len(query_words), 1)
-                command_overlap = len(query_words.intersection(command_words)) / max(len(query_words), 1)
+                input_overlap = len(query_words & input_words) / max(len(query_words), 1)
+                cmd_overlap = len(query_words & cmd_words) / max(len(query_words), 1)
                 
-                score += input_overlap * 0.4 + command_overlap * 0.3
+                score += 0.4 * input_overlap + 0.3 * cmd_overlap
                 
-                if score > 0.1:  # Only include if there's some relevance
+                if score > 0.1:
                     entry = {
                         'id': row[0],
                         'timestamp': row[1],
@@ -270,69 +339,60 @@ class HistoryLogger:
                     }
                     results.append((entry, score))
         
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:limit]
+        return sorted(results, key=lambda x: x[1], reverse=True)[:limit]
 
-    def get_context_summary(self, similar_entries: List[Tuple[dict, float]]) -> str:
-        """Generate a context summary from similar entries"""
-        if not similar_entries:
-            return ""
-        
-        context_parts = []
-        context_parts.append("# Similar past commands:")
-        
-        for i, (entry, similarity) in enumerate(similar_entries, 1):
-            context_parts.append(f"{i}. Input: '{entry['input']}'")
-            context_parts.append(f"   Command: {entry['generated_command']}")
-            context_parts.append(f"   Result: {entry['execution_result']}")
-            context_parts.append(f"   Directory: {entry['cwd']}")
-            if entry.get('tags'):
-                context_parts.append(f"   Tags: {entry['tags']}")
-            context_parts.append("")
-        
-        return "\n".join(context_parts)
-
-    def add_tags(self, entry_id: int, tags: str):
-        """Add tags to an existing history entry"""
+    def get_recent_entries(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get most recent history entries"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE history SET tags = ? WHERE id = ?", (tags, entry_id))
-
-    def get_cache_stats(self) -> dict:
-        """Get embedding cache statistics"""
-        return self.embedding_manager.get_cache_info()
-    
-    def clear_embedding_cache(self):
-        """Clear the embedding cache"""
-        self.embedding_manager.clear_cache()
-    
-    
-    
-    def shutdown(self):
-        """Shutdown the background embedding thread"""
-        self._shutdown = True
-        if self.embedding_thread.is_alive():
-            self.embedding_thread.join(timeout=2.0)
-    
-    def get_recent_entries(self, limit: int = 10) -> List[dict]:
-        """Get recent history entries"""
-        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
-                SELECT id, timestamp, input, generated_command, execution_result, cwd, tags
+                SELECT id, timestamp, input, generated_command, 
+                       execution_result, cwd, tags, has_embedding
                 FROM history 
                 ORDER BY timestamp DESC
                 LIMIT ?
             """, (limit,))
             
-            entries = []
-            for row in cursor.fetchall():
-                entries.append({
-                    'id': row[0],
-                    'timestamp': row[1],
-                    'input': row[2],
-                    'generated_command': row[3],
-                    'execution_result': row[4],
-                    'cwd': row[5],
-                    'tags': row[6]
-                })
+            return [{
+                'id': row['id'],
+                'timestamp': row['timestamp'],
+                'input': row['input'],
+                'generated_command': row['generated_command'],
+                'execution_result': row['execution_result'],
+                'cwd': row['cwd'],
+                'tags': row['tags'],
+                'has_embedding': bool(row['has_embedding'])
+            } for row in cursor.fetchall()]
+
+    def shutdown(self):
+        """Complete shutdown procedure with proper resource cleanup"""
+        if not hasattr(self, '_shutdown'):
+            return
             
-            return entries
+        self._shutdown = True
+        
+        # Wait for embedding thread to finish if it exists
+        if hasattr(self, 'embedding_thread') and self.embedding_thread.is_alive():
+            # First try to process remaining items
+            while not self.embedding_queue.empty() and self.embedding_thread.is_alive():
+                time.sleep(0.1)
+            
+            # Then wait for thread to finish
+            self.embedding_thread.join(timeout=2.0)
+        
+        # Ensure FAISS index is saved
+        try:
+            self._save_faiss_index()
+        except Exception as e:
+            print(f"Warning: Failed to save FAISS index during shutdown: {e}")
+        
+        # Clean up any other resources if needed
+        if hasattr(self, 'pending_embeddings'):
+            self.pending_embeddings.clear()
+
+    def __del__(self):
+        """Destructor to ensure proper cleanup"""
+        try:
+            self.shutdown()
+        except Exception:
+            pass  # Prevent exceptions during garbage collection
