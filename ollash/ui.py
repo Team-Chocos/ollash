@@ -63,9 +63,8 @@ def print_banner(model):
     width = 70
     print_box_line(style="top", width=width)
     print_box_line("", width=width)
-    print_box_line("OLLASH SHELL - AI POWERED", width=width)
+    print_box_line("OLLASH SHELL - Powered by Ollama", width=width)
     print_box_line(f"Model: {model}", width=width)
-    print_box_line("Semantic Search Enabled", width=width)
     print_box_line("", width=width)
     print_box_line(style="bottom", width=width)
 
@@ -88,7 +87,6 @@ def print_help():
     print_box_line(":exit, :quit         Exit shell", width=width, style="left")
     print_box_line("", width=width)
     print_box_line("Shortcuts:", width=width, style="left")
-    print_box_line("Ctrl+C               Cancel operation", width=width, style="left")
     print_box_line("Ctrl+D               Exit shell", width=width, style="left")
     print_box_line(style="bottom", width=width)
     print()
