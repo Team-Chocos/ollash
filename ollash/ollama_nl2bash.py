@@ -38,7 +38,7 @@ def run_nl_to_bash(prompt: str, autostop=None, model="llama3"):
     if confirm == 'y':
         subprocess.run(command, shell=True)
     if autostop:
-        print(f"🕒 Auto-unloading model after {autostop} seconds of inactivity...")
+        print(f"Auto-unloading model after {autostop} seconds of inactivity...")
         schedule_model_shutdown(timeout=autostop, model=model)
 
 

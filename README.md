@@ -1,4 +1,4 @@
-# 🧠 Ollash — Natural Language to Safe Terminal Commands (Linux, macOS, Windows)
+# Ollash — Natural Language to Safe Terminal Commands (Linux, macOS, Windows)
 
 Ollash is a CLI tool that lets you run terminal commands by simply typing natural language.  
 Powered by [Ollama](https://ollama.com), it translates instructions like:
@@ -17,23 +17,23 @@ dir *.log
 
 ---
 
-## 🚀 Features
+## Features
 
-* 🔁 Converts plain English to terminal commands (Bash, Zsh, PowerShell)
-* ✅ Shows the command before execution and asks for confirmation
-* 🧠 Uses local LLMs via [Ollama](https://ollama.com) — no API keys or cloud usage
-* 🧩 Auto-installs Ollama if it's not available
-* 🔄 Automatically starts the Ollama daemon with `llama3` if it's not running
-* 💻 Cross-platform support:
+* Converts plain English to terminal commands (Bash, Zsh, PowerShell)
+* Shows the command before execution and asks for confirmation
+* Uses local LLMs via [Ollama](https://ollama.com) — no API keys or cloud usage
+* Auto-installs Ollama if it's not available
+* Automatically starts the Ollama daemon with `llama3` if it's not running
+* Cross-platform support:
 
-  * 🐧 Linux
-  * 🍎 macOS (Terminal, Zsh/Bash)
-  * 🪟 Windows (PowerShell)
-* 📦 Fully pip-installable as a CLI tool
+  * Linux
+  * macOS (Terminal, Zsh/Bash)
+  * Windows (PowerShell)
+* Fully pip-installable as a CLI tool
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 ### 1. Clone the repo (for local use or development)
 
@@ -57,7 +57,7 @@ ollash check disk usage
 
 ---
 
-## 📦 Prerequisites
+## Prerequisites
 
 > Ollash depends on [Ollama](https://ollama.com) to run LLMs locally on your machine.
 
@@ -67,11 +67,11 @@ If Ollama is not installed, `ollash` will:
 * Automatically install Ollama from [https://ollama.com](https://ollama.com)
 * Start the Ollama daemon using the `llama3` model
 
-✅ No internet is needed for inference after initial model download.
+No internet is needed for inference after initial model download.
 
 ---
 
-## 💻 OS-Specific Behavior
+## OS-Specific Behavior
 
 Ollash detects your OS and generates commands accordingly:
 
@@ -83,7 +83,7 @@ Ollash detects your OS and generates commands accordingly:
 
 ---
 
-## 🛠 Example Usage
+## Example Usage
 
 ```bash
 ollash make a new folder named logs
@@ -92,7 +92,7 @@ ollash make a new folder named logs
 Sample Output:
 
 ```
-🧠 Suggested command for Linux:
+Suggested command for Linux:
 > mkdir logs
 
 Run this command? (y/N): y
@@ -100,7 +100,7 @@ Run this command? (y/N): y
 
 ---
 
-## 🛡 Disclaimer
+## Disclaimer
 
 This tool may generate commands that can alter your system. Always **read and confirm the command** before running.
 
@@ -108,13 +108,13 @@ The authors are **not responsible** for any unintended consequences or damage ca
 
 ---
 
-## 📃 License
+## License
 
 MIT License
 
 ---
 
-## ✨ Credits
+## Credits
 
 * [Ollama](https://ollama.com) for enabling local LLM inference
 * [Platform](https://docs.python.org/3/library/platform.html) for OS detection

@@ -23,7 +23,7 @@ class MenuSelector:
             fzf = FzfPrompt()
             selected = fzf.prompt(
                 options,
-                '--prompt="🤖 {}: " --height=60% --reverse --border --info=inline'.format(title)
+                '--prompt="{}: " --height=60% --reverse --border --info=inline'.format(title)
             )
             return selected[0] if selected else None
         except Exception as e:
@@ -32,7 +32,7 @@ class MenuSelector:
     
     def select_with_simple(self, options: List[str], title: str) -> Optional[str]:
         """Fallback simple selection menu"""
-        print(f"\n🤖 {title}")
+        print(f"\n{title}")
         print("═" * 60)
         
         for i, option in enumerate(options, 1):
@@ -140,7 +140,7 @@ def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Opti
     if selected:
         # Clean up the model name
         clean_model = selected.replace(" (installed)", "")
-        print(f"✅ Selected: {clean_model}")
+        print(f"Selected: {clean_model}")
         return clean_model
     
     return None
@@ -157,13 +157,13 @@ def get_model_selection_advanced(method: str = "auto") -> Optional[Tuple[str, st
         return None
         
     except KeyboardInterrupt:
-        print("\n👋 Selection cancelled")
+        print("\nSelection cancelled")
         return None
 
 
 if __name__ == "__main__":
     # Test the selection
-    print("🎯 Testing Model Selection")
+    print("Testing Model Selection")
     print("=" * 50)
     
     print(f"PyFZF available: {HAS_PYFZF}")
@@ -173,6 +173,6 @@ if __name__ == "__main__":
     result = get_model_selection_advanced()
     if result:
         backend, model = result
-        print(f"\n🎉 Ready to use {model} with {backend}!")
+        print(f"\nReady to use {model} with {backend}!")
     else:
-        print("\n❌ No model selected")
+        print("\nNo model selected")

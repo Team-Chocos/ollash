@@ -7,4 +7,4 @@ def show_download_progress():
         sys.stdout.write(".")
         sys.stdout.flush()
         time.sleep(0.1)
-    print(" ✅ Done!")
+    print(" Done!")
