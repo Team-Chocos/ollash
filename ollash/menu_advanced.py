@@ -1,10 +1,13 @@
 # ollash/menu_advanced.py
 import subprocess
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import os
 import time
 import threading
 import sys
+import subprocess
+import requests
+from tqdm import tqdm
 
 # Try different libraries for dropdown selection
 HAS_PROMPT_TOOLKIT = False
@@ -77,10 +80,12 @@ class MenuSelector:
         # Convert options to radiolist format
         values = []
         for i, option in enumerate(options):
-            # Highlight installed models
+            # Highlight installed models and Hugging Face models
             display_text = option
             if "(installed)" in option:
                 display_text = f"✓ {option}"
+            elif "(huggingface)" in option:
+                display_text = f"🤗 {option}"
             values.append((option, display_text))
         
         # Custom style for better appearance
@@ -168,8 +173,14 @@ class MenuSelector:
             
             for i, option in enumerate(options, 1):
                 if "(installed)" in option:
-                    clean_option = option.replace(" (installed)", "")
-                    table.add_row(str(i), clean_option, "✓ Installed")
+                    clean_option = option.replace(" (installed)", "").replace(" (huggingface)", "")
+                    if "(huggingface)" in option:
+                        table.add_row(str(i), f"🤗 {clean_option}", "✓ Installed")
+                    else:
+                        table.add_row(str(i), clean_option, "✓ Installed")
+                elif "(huggingface)" in option:
+                    clean_option = option.replace(" (huggingface)", "")
+                    table.add_row(str(i), f"🤗 {clean_option}", "Hugging Face")
                 else:
                     table.add_row(str(i), option, "Available")
             
@@ -198,8 +209,12 @@ class MenuSelector:
         print("═" * 60)
         
         for i, option in enumerate(options, 1):
-            if "(installed)" in option:
+            if "(installed)" in option and "(huggingface)" in option:
+                print(f"{i:2}. \033[32m🤗 {option}\033[0m")
+            elif "(installed)" in option:
                 print(f"{i:2}. \033[32m{option}\033[0m")
+            elif "(huggingface)" in option:
+                print(f"{i:2}. \033[33m🤗 {option}\033[0m")
             else:
                 print(f"{i:2}. {option}")
         
@@ -257,6 +272,92 @@ class MenuSelector:
             return self.select_with_simple(options, title)
 
 
+# Hugging Face model utilities
+def get_hf_models() -> Dict[str, str]:
+    """Get configured Hugging Face models"""
+    return {
+        "hf.co/teamcornflakes/llama-3.2-1b-instruct-nl2sh-gguf": "llama-3.2-1b-instruct-nl2sh-gguf",
+        "hf.co/teamcornflakes/llama-3.1-8b-instruct-nl2sh-gguf": "llama-3.1-8b-instruct-nl2sh-gguf", 
+        "hf.co/teamcornflakes/llama-3.2-3b-instruct-nl2sh-gguf": "llama-3.2-3b-instruct-nl2sh-gguf"
+    }
+
+
+def is_model_installed(model_name: str) -> bool:
+    """Check if a model (including Hugging Face models) is installed locally"""
+    try:
+        result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, check=True)
+        installed_models = result.stdout.lower()
+        
+        # Normalize the model name for comparison
+        normalized_name = model_name.lower()
+        
+        # For Hugging Face models, check various possible representations
+        if normalized_name.startswith('hf.co/'):
+            # Extract just the model name part
+            model_basename = normalized_name.split('/')[-1]
+            # Check if either full path or basename exists
+            return (normalized_name in installed_models or 
+                    model_basename in installed_models)
+        else:
+            # For regular models, direct check
+            return normalized_name in installed_models
+            
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+
+
+def ensure_model_available(model_name: str) -> bool:
+    """Ensure a model is available, pulling it if necessary (supports HF with tqdm)"""
+    if is_model_installed(model_name):
+        return True
+
+    print(f"Model '{model_name}' not found locally. Pulling from repository...")
+
+    try:
+        if model_name.startswith('hf.co/'):
+            # Trigger Ollama to download the HF model via `ollama run`
+            print(f"→ Running: ollama run {model_name} (to auto-download from Hugging Face)")
+            process = subprocess.Popen(
+                ['ollama', 'run', model_name, 'test'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            with tqdm(total=100, desc="Downloading Hugging Face model", unit="%", leave=True) as bar:
+                for line in process.stdout:
+                    print(line.strip())
+                    if "pulling" in line.lower() and "%" in line:
+                        try:
+                            percent = int(line.strip().split("%")[0].split()[-1])
+                            bar.n = percent
+                            bar.refresh()
+                        except:
+                            pass
+
+            process.wait()
+            if is_model_installed(model_name):
+                print(f"Successfully pulled Hugging Face model: {model_name}")
+                return True
+            else:
+                print(f"Failed to pull Hugging Face model: {model_name}")
+                return False
+
+        else:
+            # Standard Ollama registry model
+            subprocess.run(['ollama', 'pull', model_name], check=True)
+            print(f"Successfully pulled model: {model_name}")
+            return True
+
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyboardInterrupt) as e:
+        print(f"Error pulling model '{model_name}': {e}")
+        return False
+
+
+
 # Installation helper
 def install_menu_dependencies():
     """Helper to install menu dependencies"""
@@ -279,9 +380,9 @@ def install_menu_dependencies():
     print("Recommendation: pip install prompt-toolkit (best dropdown experience)")
 
 
-# Updated functions using the new selector
-def get_available_ollama_models() -> List[str]:
-    """Get list of available Ollama models from their registry"""
+# Updated functions using the new selector with Hugging Face support
+def get_available_ollama_models() -> Tuple[List[str], Dict[str, str]]:
+    """Get list of available Ollama models including Hugging Face models"""
     popular_models = [
         "llama3.3", "llama3.2", "llama3.2:1b", "llama3.2:3b",
         "llama3.1", "llama3.1:405b", "llama3", "llama2", "llama2-uncensored", "llama2:13b", "llama2:70b", "llama4",
@@ -299,6 +400,8 @@ def get_available_ollama_models() -> List[str]:
         "devstral", "llama3-chatqa", "codeqwen", "aya", "stablelm2"
     ]
 
+    # Get Hugging Face models
+    hf_models = get_hf_models()
     
     try:
         result = subprocess.run(
@@ -314,19 +417,34 @@ def get_available_ollama_models() -> List[str]:
                     model_name = parts[0]
                     installed_models.append(f"{model_name} (installed)")
         
+        # Start with installed models
         all_models = installed_models.copy()
+        
+        # Add popular models that aren't installed
         for model in popular_models:
             if not any(model in installed for installed in installed_models):
                 all_models.append(model)
+        
+        # Add Hugging Face models with status indicators
+        for full_path, display_name in hf_models.items():
+            if is_model_installed(full_path):
+                display_label = f"{display_name} (huggingface) (installed)"
+            else:
+                display_label = f"{display_name} (huggingface)"
+            all_models.append(display_label)
                 
-        return all_models if all_models else popular_models
+        return (all_models if all_models else popular_models), hf_models
         
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return popular_models
+        # Add HF models to popular models as fallback
+        fallback_models = popular_models.copy()
+        for full_path, display_name in hf_models.items():
+            fallback_models.append(f"{display_name} (huggingface)")
+        return fallback_models, hf_models
 
 
 def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Optional[str]:
-    """Select model using advanced dropdown"""
+    """Select model using advanced dropdown with Hugging Face support"""
     selector = MenuSelector()
     
     if method == "auto":
@@ -337,8 +455,8 @@ def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Opti
             print()
     
     if backend == "ollama":
-        models = get_available_ollama_models()
-        title = "Select Ollama Model"
+        models, hf_models = get_available_ollama_models()
+        title = "Select Ollama Model (including Hugging Face)"
     else:
         print(f"Backend {backend} not implemented yet")
         return None
@@ -350,17 +468,41 @@ def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Opti
     selected = selector.select(models, title, method)
     
     if selected:
-        # Clean up the model name
-        clean_model = selected.replace(" (installed)", "")
-        print(f"Selected: {clean_model}")
-        return clean_model
+        # Map display name back to full Hugging Face path if needed
+        for full_name, display_name in hf_models.items():
+            if selected.startswith(display_name):
+                selected = full_name
+                break
+        
+        # Clean up the model name for regular models
+        if " (huggingface)" not in selected:
+            selected = selected.replace(" (installed)", "")
+        else:
+            # For HF models, remove display suffixes but keep the full path
+            selected = selected.replace(" (huggingface)", "").replace(" (installed)", "")
+            # Re-map to full path if it was shortened
+            for full_name, display_name in hf_models.items():
+                if selected == display_name:
+                    selected = full_name
+                    break
+        
+        print(f"Selected: {selected}")
+        
+        # Ensure the model is available (auto-pull if needed)
+        if selected.startswith('hf.co/'):
+            print("Checking Hugging Face model availability...")
+            if not ensure_model_available(selected):
+                print("Failed to make model available. Please try again.")
+                return None
+        
+        return selected
     
     return None
 
 
 # Integration function for your existing code
 def get_model_selection_advanced(method: str = "auto") -> Optional[Tuple[str, str]]:
-    """Enhanced model selection with dropdown alternatives"""
+    """Enhanced model selection with dropdown alternatives and Hugging Face support"""
     try:
         # For now, assume ollama backend
         backend = "ollama"
@@ -377,13 +519,21 @@ def get_model_selection_advanced(method: str = "auto") -> Optional[Tuple[str, st
 
 if __name__ == "__main__":
     # Test the enhanced selection
-    print("Testing Enhanced Model Selection")
-    print("=" * 50)
+    print("Testing Enhanced Model Selection with Hugging Face Support")
+    print("=" * 60)
     
     # Show available methods
     selector = MenuSelector()
     methods = selector.get_available_methods()
     print(f"Available selection methods: {', '.join(methods)}")
+    print()
+    
+    # Show HF models
+    hf_models = get_hf_models()
+    print("Configured Hugging Face models:")
+    for full_path, display_name in hf_models.items():
+        status = "installed" if is_model_installed(full_path) else "available"
+        print(f"  - {display_name} ({status})")
     print()
     
     # Test selection
