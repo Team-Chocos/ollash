@@ -96,7 +96,7 @@ class MenuSelector:
         
         try:
             result = radiolist_dialog(
-                title=f"🤖 {title}",
+                title=f"{title}",
                 text="Use arrow keys to navigate, Space to select, Enter to confirm:",
                 values=values,
                 style=style
@@ -135,7 +135,7 @@ class MenuSelector:
             fzf = FzfPrompt()
             selected = fzf.prompt(
                 options,
-                '--prompt="🤖 {}: " --height=60% --reverse --border --info=inline'.format(title)
+                '--prompt="{}: " --height=60% --reverse --border --info=inline'.format(title)
             )
             return selected[0] if selected else None
         except Exception as e:
@@ -194,7 +194,7 @@ class MenuSelector:
     
     def select_with_simple(self, options: List[str], title: str) -> Optional[str]:
         """Fallback simple selection menu"""
-        print(f"\n🤖 {title}")
+        print(f"\n{title}")
         print("═" * 60)
         
         for i, option in enumerate(options, 1):
@@ -243,7 +243,7 @@ class MenuSelector:
             else:
                 method = "simple"
         
-        print(f"📋 Using {method} selector...")
+        print(f"Using {method} selector...")
         
         if method == "prompt-toolkit":
             return self.select_with_prompt_toolkit(options, title)
@@ -267,16 +267,16 @@ def install_menu_dependencies():
         "rich": "rich"
     }
     
-    print("🚀 Available enhanced menu options:")
+    print("Available enhanced menu options:")
     print("Install any of these for better dropdown experience:")
     print()
     
     for name, package in packages.items():
-        status = "✓ Installed" if globals().get(f"HAS_{name.replace('-', '_').upper()}") else "❌ Not installed"
+        status = "✓ Installed" if globals().get(f"HAS_{name.replace('-', '_').upper()}") else "Not installed"
         print(f"  {status} - {name}: pip install {package}")
     
     print()
-    print("💡 Recommendation: pip install prompt-toolkit (best dropdown experience)")
+    print("Recommendation: pip install prompt-toolkit (best dropdown experience)")
 
 
 # Updated functions using the new selector
@@ -332,7 +332,7 @@ def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Opti
     if method == "auto":
         available_methods = selector.get_available_methods()
         if len(available_methods) == 1 and available_methods[0] == "simple":
-            print("💡 For better dropdown experience, try:")
+            print("For better dropdown experience, try:")
             install_menu_dependencies()
             print()
     
@@ -352,7 +352,7 @@ def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Opti
     if selected:
         # Clean up the model name
         clean_model = selected.replace(" (installed)", "")
-        print(f"✅ Selected: {clean_model}")
+        print(f"Selected: {clean_model}")
         return clean_model
     
     return None
@@ -371,13 +371,13 @@ def get_model_selection_advanced(method: str = "auto") -> Optional[Tuple[str, st
         return None
         
     except KeyboardInterrupt:
-        print("\n👋 Selection cancelled")
+        print("\nSelection cancelled")
         return None
 
 
 if __name__ == "__main__":
     # Test the enhanced selection
-    print("🎯 Testing Enhanced Model Selection")
+    print("Testing Enhanced Model Selection")
     print("=" * 50)
     
     # Show available methods
@@ -390,6 +390,6 @@ if __name__ == "__main__":
     result = get_model_selection_advanced()
     if result:
         backend, model = result
-        print(f"\n🎉 Ready to use {model} with {backend}!")
+        print(f"\nReady to use {model} with {backend}!")
     else:
-        print("\n❌ No model selected")
+        print("\nNo model selected")

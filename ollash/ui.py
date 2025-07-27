@@ -102,15 +102,15 @@ def format_prompt(model):
 def print_status(message, status_type="info", in_box=True):
     """Print formatted status messages"""
     symbols = {
-        "info": "ℹ",
+        "info": "i",
         "success": "✓",
         "error": "✗",
         "suggestion": "→",
-        "executing": "⚡",
+        "executing": "",
         "context": "",
         "embedding": ""
     }
-    symbol = symbols.get(status_type, "ℹ")
+    symbol = symbols.get(status_type, "i")
     
     if in_box:
         print_box_line(f"{symbol} {message}", width=70, style="left")
@@ -121,7 +121,7 @@ def print_status(message, status_type="info", in_box=True):
 def print_suggested_command(command, has_context=False):
     """Print suggested command with clean aesthetic"""
     print()
-    context_indicator = " 🔍" if has_context else ""
+    context_indicator = "" 
     print(f"│ \033[36m→\033[0m \033[1m{command}\033[0m{context_indicator}")
     print("│")
 
@@ -129,14 +129,14 @@ def print_suggested_command(command, has_context=False):
 def print_context_info(context: str):
     """Print context information if available"""
     if context and context.strip():
-        print("│ \033[90m💡 Based on your past similar commands\033[0m")
+        print("│ \033[90m Based on your past similar commands\033[0m")
         print("│")
 
 
 def print_execution_start(command):
     """Print execution start with clean style"""
     print()
-    print(f"│ \033[33m⚡\033[0m Executing: \033[90m{command}\033[0m")
+    print(f"│ \033[33m\033[0m Executing: \033[90m{command}\033[0m")
     print("│ " + "─" * 50)
 
 

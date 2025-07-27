@@ -9,7 +9,6 @@ from ollash.shell import main as shell_main
 def main():
     config = load_config()
 
-    # 🛠 insert fallback subcommand BEFORE building the parser
     if len(sys.argv) > 1 and sys.argv[1] not in {"shell", "run", "-h", "--help"}:
         sys.argv.insert(1, "run")
 
