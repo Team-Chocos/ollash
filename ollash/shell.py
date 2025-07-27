@@ -22,7 +22,7 @@ def main(model=None):
     
     # Interactive model selection if no model specified
     if not model:
-        selection = get_model_selection_advanced(method="pyfzf")
+        selection = get_model_selection_advanced(method="inquirer")
         
         if not selection:
             print("No model selected. Exiting...")
