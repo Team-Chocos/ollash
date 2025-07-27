@@ -123,7 +123,17 @@ def get_command_suggestion(prompt: str, model: str) -> str:
     
     ollama_cmd = [
         "ollama", "run", model,
-        f"Translate the following instruction into a safe {os_label} terminal command. Respond ONLY with the command, no explanation:\nInstruction: {prompt}"
+            f"""You are a shell assistant. Translate the user's instruction into a **safe, valid, bash-compatible** terminal command.
+
+            Rules:
+            - Return **only the command**, no explanation or formatting.
+            - Avoid unsafe actions (e.g., `rm -rf /`), use `--dry-run`, `-i`, or similar when appropriate.
+            - Chain commands with `&&` if needed.
+            - Quote or escape paths with spaces/special characters.
+            - When unsure, choose the safest and most common interpretation.
+
+            Instruction: {prompt}"""
+
     ]
 
     try:
