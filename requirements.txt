@@ -1,2 +1,4 @@
 platformdirs
 pyyaml
+tqdm
+inquirer

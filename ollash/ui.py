@@ -82,6 +82,7 @@ def print_help():
     print_box_line(":help                Show this help", width=width, style="left")
     print_box_line(":clear               Clear screen", width=width, style="left")
     print_box_line(":model <name>        Switch model", width=width, style="left")
+    print_box_line(":sh <command>        Run shell command directly", width=width, style="left")
     print_box_line(":history [n]         Show recent history", width=width, style="left")
     print_box_line(":search <query>      Search command history", width=width, style="left")
     print_box_line(":exit, :quit         Exit shell", width=width, style="left")
