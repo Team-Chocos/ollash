@@ -46,11 +46,13 @@ def install_ollama():
 
     if os_label == "Linux":
         time.sleep(1)
-        show_download_progress()
+        # show_download_progress()
         try:
             subprocess.run("curl -fsSL https://ollama.com/install.sh | sh", shell=True, check=True)
+            sys.exit(0)
         except subprocess.CalledProcessError:
             print("Failed to install Ollama on Linux. Please install manually: https://ollama.com/download")
+            print("Ollash is ready to use now!")
             sys.exit(1)
 
     elif os_label == "macOS":
@@ -124,7 +126,7 @@ def is_model_installed(model_name):
 
 def pull_model_with_progress(model_name):
     print(f"\nModel '{model_name}' not found. Downloading now...")
-    show_download_progress()
+    # show_download_progress()
     try:
         subprocess.run(["ollama", "pull", model_name], check=True)
     except subprocess.CalledProcessError:

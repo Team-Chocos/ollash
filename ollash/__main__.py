@@ -31,6 +31,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "shell":
+        ensure_ollama_ready()
         if "--model" in sys.argv:
             shell_main(model=args.model)
         else:
