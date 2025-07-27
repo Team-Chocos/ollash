@@ -1,6 +1,7 @@
 # ollash/shell.py
 import subprocess
 import os
+from ollash.menu_advanced import select_model_two_stage_inquirer
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress
 from ollash.history import HistoryLogger
 from ollash.menu_advanced import get_model_selection_advanced
@@ -16,13 +17,15 @@ from ollash.commands import (
 )
 
 
+
+
 def main(model=None):
     """Main REPL shell function with semantic search"""
     history = HistoryLogger(model)
     
     # Interactive model selection if no model specified
     if not model:
-        selection = get_model_selection_advanced(method="inquirer")
+        selection = select_model_two_stage_inquirer()
         
         if not selection:
             print("No model selected. Exiting...")

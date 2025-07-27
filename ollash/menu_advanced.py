@@ -442,6 +442,90 @@ def get_available_ollama_models() -> Tuple[List[str], Dict[str, str]]:
             fallback_models.append(f"{display_name} (huggingface)")
         return fallback_models, hf_models
 
+def select_model_two_stage_inquirer() -> Optional[Tuple[str, str]]:
+    """
+    First show model family list, then show available variants in that family.
+    Uses inquirer for both steps.
+    """
+    # Step 1: group models
+    all_models, hf_models = get_available_ollama_models()
+    
+    families = {
+        "llama": [],
+        "qwen": [],
+        "gemma": [],
+        "deepseek": [],
+        "mistral": [],
+        "command-r": [],
+        "huggingface": []  # explicitly for hf_models
+    }
+
+    # Fill family map
+    for model in all_models:
+        base = model.lower()
+        if "(huggingface)" in base:
+            families["huggingface"].append(model)
+        elif base.startswith("llama"):
+            families["llama"].append(model)
+        elif base.startswith("qwen"):
+            families["qwen"].append(model)
+        elif base.startswith("gemma"):
+            families["gemma"].append(model)
+        elif base.startswith("deepseek"):
+            families["deepseek"].append(model)
+        elif base.startswith("mistral"):
+            families["mistral"].append(model)
+        elif base.startswith("command-r"):
+            families["command-r"].append(model)
+        else:
+            families.setdefault("other", []).append(model)
+
+    # Step 2: pick family
+    import inquirer
+    family_question = [
+        inquirer.List(
+            "family",
+            message="Select Model Family",
+            choices=[f for f in families if families[f]]
+        )
+    ]
+    family_answer = inquirer.prompt(family_question)
+    if not family_answer:
+        return None
+
+    selected_family = family_answer["family"]
+    from ollash.ui import clear_screen
+    clear_screen()
+    family_models = families[selected_family]
+
+    # Step 3: pick variant
+    variant_question = [
+        inquirer.List(
+            "variant",
+            message=f"Select Model from '{selected_family}'",
+            choices=family_models
+        )
+    ]
+    variant_answer = inquirer.prompt(variant_question)
+    if not variant_answer:
+        return None
+
+    selected_variant = variant_answer["variant"]
+    # Remove UI suffixes like " (installed)" or " (huggingface)"
+    selected_variant = selected_variant.replace(" (installed)", "").replace(" (huggingface)", "").strip()
+
+
+    # Final remap to HF path if needed
+    for full_name, display in hf_models.items():
+        if selected_variant.startswith(display):
+            selected_variant = full_name
+            break
+        elif selected_variant == display:
+            selected_variant = full_name
+            break
+
+    return ("ollama", selected_variant)
+
 
 def select_model_advanced(backend: str = "ollama", method: str = "auto") -> Optional[str]:
     """Select model using advanced dropdown with Hugging Face support"""
