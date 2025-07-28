@@ -2,6 +2,9 @@ from setuptools import setup, find_packages
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
+
+with open("requirements.txt", "r", encoding="utf-8") as fh:
+    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 setup(
     name='ollash',
     version='0.1.5',
@@ -13,6 +16,7 @@ setup(
     url='https://github.com/codexx07/ollash',
     packages=find_packages(),
     python_requires='>=3.7',
+    install_requires=requirements,
     include_package_data=True,
     package_data={
         "ollash": ["config.yaml"]
