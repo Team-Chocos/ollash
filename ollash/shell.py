@@ -4,7 +4,6 @@ import os
 from ollash.menu_advanced import select_model_two_stage_inquirer
 from ollash.utils import ensure_ollama_ready, is_model_installed, pull_model_with_progress
 from ollash.history import HistoryLogger
-from ollash.menu_advanced import get_model_selection_advanced
 from ollash.ui import (
     ThinkingAnimation, clear_screen, print_banner, print_help, 
     format_prompt, print_status, print_suggested_command, 
@@ -15,9 +14,6 @@ from ollash.commands import (
     get_contextual_command_suggestion, get_command_suggestion,
     execute_command, input_with_prefill
 )
-
-
-
 
 def main(model=None):
     """Main REPL shell function with semantic search"""
