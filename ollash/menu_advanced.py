@@ -273,13 +273,18 @@ class MenuSelector:
 
 
 # Hugging Face model utilities
-def get_hf_models() -> Dict[str, str]:
+def get_hf_models() -> dict:
     """Get configured Hugging Face models"""
     return {
         "hf.co/teamcornflakes/llama-3.2-1b-instruct-nl2sh-gguf": "llama-3.2-1b-instruct-nl2sh-gguf",
-        "hf.co/teamcornflakes/llama-3.1-8b-instruct-nl2sh-gguf": "llama-3.1-8b-instruct-nl2sh-gguf", 
-        "hf.co/teamcornflakes/llama-3.2-3b-instruct-nl2sh-gguf": "llama-3.2-3b-instruct-nl2sh-gguf"
+        "hf.co/teamcornflakes/llama-3.2-3b-instruct-nl2sh-gguf": "llama-3.2-3b-instruct-nl2sh-gguf",
+        "hf.co/teamcornflakes/llama-3.1-8b-instruct-nl2sh-gguf": "llama-3.1-8b-instruct-nl2sh-gguf",
+        "hf.co/teamcornflakes/Qwen2.5-Coder-0.5B-Instruct-NL2SH-gguf": "Qwen2.5-Coder-0.5B-Instruct-NL2SH-gguf",
+        "hf.co/teamcornflakes/Qwen2.5-Coder-1.5B-Instruct-NL2SH-gguf": "Qwen2.5-Coder-1.5B-Instruct-NL2SH-gguf",
+        "hf.co/teamcornflakes/Qwen2.5-Coder-3B-Instruct-NL2SH-gguf": "Qwen2.5-Coder-3B-Instruct-NL2SH-gguf",
+        "hf.co/teamcornflakes/Qwen2.5-Coder-7B-Instruct-NL2SH-gguf": "Qwen2.5-Coder-7B-Instruct-NL2SH-gguf"
     }
+
 
 
 def is_model_installed(model_name: str) -> bool:
