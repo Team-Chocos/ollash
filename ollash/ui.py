@@ -2,6 +2,8 @@
 import os
 import time
 import threading
+import subprocess
+import shutil
 
 
 class ThinkingAnimation:
@@ -58,15 +60,102 @@ def print_box_line(content="", width=70, style="middle"):
         print(f"│ {content}{' ' * padding} │")
 
 
+def _has_figlet():
+    """Check if figlet is available on the system"""
+    return shutil.which('figlet') is not None
+
+
+def _generate_figlet_text(text, font='slant'):
+    """Generate figlet text with fallback"""
+    if not _has_figlet():
+        return None
+    
+    # Try different aesthetic fonts in order of preference
+    fonts = ['slant', 'lean', 'small', 'mini']
+    
+    for font_name in fonts:
+        try:
+            result = subprocess.run(
+                ['figlet', '-f', font_name, text],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+            continue
+    
+    # Final fallback without font specification
+    try:
+        result = subprocess.run(
+            ['figlet', text],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+        pass
+    
+    return None
+
+
 def print_banner(model):
-    """Print beautiful boxed banner"""
-    width = 70
-    print_box_line(style="top", width=width)
-    print_box_line("", width=width)
-    print_box_line("OLLASH SHELL - Powered by Ollama", width=width)
-    print_box_line(f"Model: {model}", width=width)
-    print_box_line("", width=width)
-    print_box_line(style="bottom", width=width)
+    """Print beautiful banner with figlet if available"""
+    # Try to generate figlet text
+    figlet_text = _generate_figlet_text("OLLASH")
+    
+    if figlet_text:
+        # Print figlet banner with color and proper formatting
+        print()
+        lines = figlet_text.split('\n')
+        # Filter out empty lines
+        lines = [line for line in lines if line.strip()]
+        
+        # Calculate width - ensure minimum width for model info
+        content_width = max(len(line) for line in lines)
+        model_text = f"Powered by Ollama • Model: {model}"
+        min_width = len(model_text) + 4
+        box_width = max(content_width + 6, min_width)
+        
+        # Top border
+        print(f"┌{'─' * (box_width-2)}┐")
+        
+        # Empty line
+        print(f"│{' ' * (box_width-2)}│")
+        
+        # Figlet text with cyan color
+        for line in lines:
+            padding = box_width - len(line) - 4
+            left_pad = padding // 2
+            right_pad = padding - left_pad
+            print(f"│ {' ' * left_pad}\033[36m{line}\033[0m{' ' * right_pad} │")
+        
+        # Empty line
+        print(f"│{' ' * (box_width-2)}│")
+        
+        # Separator
+        print(f"├{'─' * (box_width-2)}┤")
+        
+        # Model info with subtle color
+        padding = box_width - len(model_text) - 4
+        left_pad = padding // 2
+        right_pad = padding - left_pad
+        print(f"│ {' ' * left_pad}\033[90m{model_text}\033[0m{' ' * right_pad} │")
+        
+        # Bottom border
+        print(f"└{'─' * (box_width-2)}┘")
+    else:
+        # Fallback to original box design with color
+        width = 70
+        print_box_line(style="top", width=width)
+        print_box_line("", width=width)
+        print_box_line("\033[36mOLLASH SHELL\033[0m - Powered by Ollama", width=width)
+        print_box_line(f"\033[90mModel: {model}\033[0m", width=width)
+        print_box_line("", width=width)
+        print_box_line(style="bottom", width=width)
 
 
 def print_help():
