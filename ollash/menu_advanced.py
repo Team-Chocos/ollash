@@ -66,6 +66,7 @@ def get_available_ollama_models() -> Tuple[List[str], Dict[str, str]]:
         "qwen3", "qwen2.5", "qwen2", "qwen",
         "phi4", "phi4-mini", "phi3", "phi",
         "mistral", "mistral-nemo",
+<<<<<<< HEAD
         "deepseek-v3", "deepseek-coder", "deepseek-coder-v2",
         "dolphin3", "dolphin-llama3", "dolphin-mixtral",
         "mixtral", "command-r", "command-r-plus",
@@ -74,6 +75,12 @@ def get_available_ollama_models() -> Tuple[List[str], Dict[str, str]]:
         "codegemma", "codellama",
         "neural-chat", "starcoder2", "starling-lm", "wizardlm2",
         "devstral", "llama3-chatqa", "codeqwen", "aya", "stablelm2"
+=======
+        "deepseek-v3", "deepseek-coder", "deepseek-coder-v2",  # coder models also support instruction-following
+        "mixtral",
+        "smollm2", "smollm", "tinyllama",
+        "codegemma", "codellama",  # still usable as chat models
+>>>>>>> 19808cb57617140dee78217c1a2d36d631150e24
     ]
 
     # Get Hugging Face models
