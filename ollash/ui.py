@@ -152,8 +152,8 @@ def print_banner(model):
         width = 70
         print_box_line(style="top", width=width)
         print_box_line("", width=width)
-        print_box_line("\033[36mOLLASH SHELL\033[0m - Powered by Ollama", width=width)
-        print_box_line(f"\033[90mModel: {model}\033[0m", width=width)
+        print_box_line("OLLASH SHELL - Powered by Ollama", width=width)
+        print_box_line(f"Model: {model}", width=width)
         print_box_line("", width=width)
         print_box_line(style="bottom", width=width)
 
