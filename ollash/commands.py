@@ -73,6 +73,7 @@ Respond ONLY with the command, no explanation."""
         )
 
         raw_output = response.stdout.strip()
+        #check
         
         # Extract command
         match = re.search(r"`([^`]+)`", raw_output)
