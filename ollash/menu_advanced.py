@@ -397,7 +397,7 @@ def get_available_ollama_models() -> Tuple[List[str], Dict[str, str]]:
         "mistral", "mistral-nemo",
         "deepseek-v3", "deepseek-coder", "deepseek-coder-v2",  # coder models also support instruction-following
         "dolphin3", "dolphin-llama3", "dolphin-mixtral",
-        "mixtral", "command-r", "command-r-plus",
+        "mixtral",
         "granite3.3", "granite3.2",
         "smollm2", "smollm", "tinyllama",
         "codegemma", "codellama",  # still usable as chat models
