@@ -485,7 +485,7 @@ def select_model_two_stage_inquirer() -> Optional[Tuple[str, str]]:
     family_question = [
         inquirer.List(
             "family",
-            message="Select Model Family",
+            message="Select Supported Models",
             choices=[f for f in families if families[f]]
         )
     ]
