@@ -42,6 +42,12 @@ Ollash includes the following components:
 
 ## Installation
 
+For better UI experience we recommend using [`figlet`](https://github.com/xero/figlet-fonts) and [`fzf`](https://github.com/junegunn/fzf)
+
+```bash
+sudo apt install figlet fzf
+```
+
 Cross-Platform Support for Linux and MacOS, currently experimental for Windows
 
 ```bash
@@ -65,6 +71,7 @@ This runs a single prompt through your local model and prints the resulting shel
 ---
 
 ### Interactive Shell
+
 
 ```bash
 ollash shell 
