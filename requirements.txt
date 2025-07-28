@@ -1,0 +1,6 @@
+platformdirs
+pyyaml
+tqdm
+inquirer
+interro
+pyfzf

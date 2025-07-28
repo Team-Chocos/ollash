@@ -1,7 +1,13 @@
 # Python build artifacts
+.gitignore/
 *.egg-info/
 dist/
 build/
 __pycache__/
 *.pyc
 commands.txt
+rag_datastore/
+.vscode/
+progress.txt
+./display.py
+./benchmark.py
