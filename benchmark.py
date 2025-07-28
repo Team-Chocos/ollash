@@ -298,13 +298,9 @@ Answer (true/false):"""
         return self.query_ollama_model(model_name, icl_prompt)
 
     def load_icl_examples(self):
-        """Load and prepare ICL examples"""
-        training_data = self.load_training_dataset()
-        if training_data:
-            self.icl_examples = self.create_icl_examples_with_tfidf(training_data, k=25)
-            logger.info(f"Loaded {len(self.icl_examples)} ICL examples")
-        else:
-            logger.warning("No training data available for ICL examples")
+        """Skip ICL example loading for testing only"""
+        self.icl_examples = []
+        logger.info("Skipping ICL examples - testing mode only")
 
     # ================= CORE BENCHMARK METHODS =================
     
