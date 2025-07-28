@@ -3,3 +3,4 @@ pyyaml
 tqdm
 inquirer
 interro
+pyfzf
