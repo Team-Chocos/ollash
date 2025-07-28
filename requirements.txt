@@ -2,3 +2,4 @@ platformdirs
 pyyaml
 tqdm
 inquirer
+interro
