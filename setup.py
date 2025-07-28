@@ -7,7 +7,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 setup(
     name='ollash',
-    version='1.0.1',
+    version='1.0.2',
     author='Team-Chocos',
     author_email='teamcornflakesxx@gmail.com',
     description='Convert natural language into safe Terminal commands using Ollama.',
