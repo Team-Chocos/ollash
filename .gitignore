@@ -9,3 +9,5 @@ commands.txt
 rag_datastore/
 .vscode/
 progress.txt
+./display.py
+./benchmark.py
