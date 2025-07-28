@@ -13,30 +13,55 @@ import re
 from collections import Counter
 from huggingface_hub import login
 from pathlib import Path
+import docker
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.translate.bleu_score import sentence_bleu
+import nltk
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 login(token=os.environ["HUGGINGFACE_TOKEN"])
 
-class NL2SHBenchmark:
+class EnhancedNL2SHBenchmark:
     def __init__(self):
-        """Initialize the NL2SH benchmark system with lightweight similarity metrics"""
+        """Initialize the enhanced NL2SH benchmark system with paper's evaluation methods"""
         self.results = []
-        # Create benchmarks directory
         self.benchmark_dir = Path.home() / '.ollash' / 'benchmarks'
         self.benchmark_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize TF-IDF vectorizer as alternative to sentence transformers
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        
+        # Initialize ICL examples
+        self.icl_examples = None
+        
         # Define recommended models for 8GB RAM setup
         self.recommended_models = [
-            'llama3.2:3b',      # ~2GB - Latest Llama, good performance
-            'llama3.2:1b',      # ~1GB - Smallest Llama, fast inference
-            'codellama:7b',     # ~4GB - Best coding model in this size
-            'deepseek-coder:6.7b', # ~4GB - Excellent for coding tasks
-            'qwen2.5-coder:7b', # ~4GB - Strong coding performance
-            'phi3:mini',        # ~2GB - Microsoft's efficient model
-            'mistral:7b',       # ~4GB - Good general performance
-            'granite-code:3b',  # ~2GB - IBM's code model
+            'llama3.2:3b',
+            'llama3.2:1b',
+            'codellama:7b',
+            'deepseek-coder:6.7b',
+            'qwen2.5-coder:7b',
+            'phi3:mini',
+            'mistral:7b',
+            'granite-code:3b',
+        ]
+        
+        # Bash utilities for constrained decoding
+        self.bash_utilities = [
+            'find', 'grep', 'awk', 'sed', 'ls', 'cat', 'sort', 'uniq', 
+            'head', 'tail', 'cut', 'tr', 'wc', 'chmod', 'chown', 'cp', 
+            'mv', 'rm', 'mkdir', 'rmdir', 'tar', 'gzip', 'curl', 'wget',
+            'ps', 'kill', 'top', 'df', 'du', 'mount', 'umount', 'ln',
+            'touch', 'which', 'whereis', 'locate', 'file', 'stat'
         ]
         
     def get_recommended_models(self) -> List[str]:
@@ -50,13 +75,11 @@ class NL2SHBenchmark:
             
             if "train" in ds:
                 data = []
-                # Add tqdm for dataset loading
                 for item in tqdm(ds["train"], desc="Loading dataset items"):
-                    # Include both bash commands for more comprehensive evaluation
                     data.append({
                         "nl": item["nl"], 
-                        "sh": item["bash"],          # Primary command
-                        "sh_alt": item["bash2"],     # Alternative command
+                        "sh": item["bash"],
+                        "sh_alt": item["bash2"],
                         "difficulty": item["difficulty"]
                     })
                 
@@ -69,12 +92,226 @@ class NL2SHBenchmark:
         except Exception as e:
             logger.error(f"Error loading dataset: {e}")
             return []
+    
+
+    # ================= PAPER'S FUNCTIONAL EQUIVALENCE HEURISTICS =================
+    
+    def bleu_feh(self, predicted: str, actual: str, threshold: float = 0.75) -> bool:
+        """BLEU-based functional equivalence heuristic from the paper"""
+        if not predicted or not actual:
+            return False
         
+        try:
+            reference = [actual.split()]
+            candidate = predicted.split()
+            bleu_score = sentence_bleu(reference, candidate)
+            return bleu_score >= threshold
+        except Exception:
+            return False
+
+    def execute_command_safely(self, command: str, timeout: int = 30) -> str:
+        """Execute command in Docker container (like InterCode-ALFA)"""
+        try:
+            client = docker.from_env()
+            container = client.containers.run(
+                'ubuntu:20.04',
+                command=['bash', '-c', command],
+                remove=True,
+                detach=False,
+                stdout=True,
+                stderr=True,
+                timeout=timeout
+            )
+            return container.decode('utf-8') if isinstance(container, bytes) else str(container)
+        except Exception as e:
+            logger.warning(f"Command execution failed: {e}")
+            return ""
+
+    def compare_outputs_with_tfidf(self, output1: str, output2: str) -> float:
+        """Compare command outputs using TF-IDF (replacing sentence transformers)"""
+        try:
+            if not output1 and not output2:
+                return 1.0
+            if not output1 or not output2:
+                return 0.0
+            
+            # Use TF-IDF vectorizer
+            documents = [output1, output2]
+            try:
+                tfidf_matrix = self.tfidf_vectorizer.fit_transform(documents)
+                # Calculate cosine similarity
+                similarity = np.dot(tfidf_matrix[0].toarray(), tfidf_matrix[1].toarray().T)[0, 0]
+                return float(similarity)
+            except:
+                # Fallback to simple text similarity if TF-IDF fails
+                return self._simple_text_similarity(output1, output2)
+        except Exception:
+            return 0.0
+
+    def _simple_text_similarity(self, text1: str, text2: str) -> float:
+        """Simple text similarity as fallback"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Normalize texts
+        text1 = text1.lower().strip()
+        text2 = text2.lower().strip()
+        
+        # Use difflib for similarity
+        return difflib.SequenceMatcher(None, text1, text2).ratio()
+
+    def evaluate_outputs_with_llm(self, task: str, pred_cmd: str, actual_cmd: str, 
+                                 pred_output: str, actual_output: str) -> float:
+        """Use LLM to evaluate functional equivalence (paper's best method - 95% accuracy)"""
+        prompt = f"""You will be given a task, two Bash commands, and their outputs. 
+Determine if the second command accomplishes the task. Return only 'true' or 'false'.
+
+Task: {task}
+Ground Truth Command: {actual_cmd}
+Model Command: {pred_cmd}
+Ground Truth Output: {actual_output}
+Model Command Output: {pred_output}
+
+Answer (true/false):"""
+        
+        try:
+            response = self.query_ollama_model('llama3.1:8b', prompt)
+            return 1.0 if response.strip().lower() == 'true' else 0.0
+        except Exception:
+            return 0.0
+
+    def execution_based_feh(self, predicted: str, actual: str, nl_query: str) -> Dict[str, float]:
+        """Execution + LLM evaluation (paper's best method - 95% accuracy)"""
+        try:
+            # Execute both commands in controlled environment
+            pred_output = self.execute_command_safely(predicted)
+            actual_output = self.execute_command_safely(actual)
+            
+            # Method 1: Execution + TF-IDF (replacing mxbai-embed)
+            tfidf_score = self.compare_outputs_with_tfidf(pred_output, actual_output)
+            
+            # Method 2: Execution + LLM evaluation (95% accuracy from paper)  
+            llm_score = self.evaluate_outputs_with_llm(nl_query, predicted, actual, 
+                                                      pred_output, actual_output)
+            
+            return {
+                'execution_tfidf_score': tfidf_score,
+                'execution_llm_score': llm_score,
+                'functional_equivalent': llm_score >= 0.8,
+                'pred_output': pred_output,
+                'actual_output': actual_output
+            }
+        except Exception as e:
+            logger.warning(f"Execution-based evaluation failed: {e}")
+            return {
+                'execution_tfidf_score': 0.0, 
+                'execution_llm_score': 0.0, 
+                'functional_equivalent': False,
+                'pred_output': '',
+                'actual_output': ''
+            }
+
+    # ================= PAPER'S TRANSLATION ENHANCEMENT METHODS =================
+    
+    def constrained_decoding_query(self, model_name: str, prompt: str) -> str:
+        """Apply constrained decoding - constrain first token to Bash utilities"""
+        response = self.query_ollama_model(model_name, prompt)
+        
+        # Post-process to prefer bash utilities if response doesn't start with one
+        if response and not any(response.strip().split()[0] in self.bash_utilities for _ in [None]):
+            words = response.split()
+            for i, word in enumerate(words):
+                if word in self.bash_utilities:
+                    response = ' '.join(words[i:])
+                    break
+        
+        return response
+
+    def create_icl_examples_with_tfidf(self, training_data: List[Dict], k: int = 25) -> List[Dict]:
+        """Create ICL examples using TF-IDF and k-means clustering (replacing sentence transformers)"""
+        if len(training_data) < k:
+            return training_data
+        
+        try:
+            # Create TF-IDF embeddings for commands
+            commands = [item['sh'] for item in training_data]
+            tfidf_matrix = self.tfidf_vectorizer.fit_transform(commands)
+            
+            # Convert sparse matrix to dense for k-means
+            embeddings = tfidf_matrix.toarray()
+            
+            # Cluster embeddings
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(embeddings)
+            
+            # Select representative examples (closest to centroids)
+            examples = []
+            for i in range(k):
+                cluster_indices = np.where(clusters == i)[0]
+                if len(cluster_indices) > 0:
+                    # Find closest to centroid
+                    centroid = kmeans.cluster_centers_[i]
+                    distances = [np.linalg.norm(embeddings[idx] - centroid) for idx in cluster_indices]
+                    closest_idx = cluster_indices[np.argmin(distances)]
+                    examples.append(training_data[closest_idx])
+            
+            return examples
+        except Exception as e:
+            logger.warning(f"ICL example creation failed: {e}")
+            # Fallback: select diverse examples based on command variety
+            return self._fallback_icl_selection(training_data, k)
+
+    def _fallback_icl_selection(self, training_data: List[Dict], k: int) -> List[Dict]:
+        """Fallback ICL selection based on command diversity"""
+        # Group by first command word (utility)
+        command_groups = {}
+        for item in training_data:
+            first_word = item['sh'].split()[0] if item['sh'].split() else 'unknown'
+            if first_word not in command_groups:
+                command_groups[first_word] = []
+            command_groups[first_word].append(item)
+        
+        # Select diverse examples
+        examples = []
+        utilities = list(command_groups.keys())
+        
+        # Round-robin selection from different utilities
+        while len(examples) < k and utilities:
+            for utility in utilities[:]:
+                if command_groups[utility] and len(examples) < k:
+                    examples.append(command_groups[utility].pop(0))
+                if not command_groups[utility]:
+                    utilities.remove(utility)
+        
+        return examples[:k]
+
+    def icl_enhanced_query(self, model_name: str, prompt: str, examples: List[Dict]) -> str:
+        """Query with in-context learning examples"""
+        icl_prompt = "Your task is to translate natural language to Bash commands.\n\n"
+        
+        # Add examples
+        for example in examples[:25]:  # Limit to 25 as per paper
+            icl_prompt += f"Input: {example['nl']}\nOutput: {example['sh']}\n\n"
+        
+        icl_prompt += f"Input: {prompt}\nOutput: "
+        
+        return self.query_ollama_model(model_name, icl_prompt)
+
+    def load_icl_examples(self):
+        """Load and prepare ICL examples"""
+        training_data = self.load_training_dataset()
+        if training_data:
+            self.icl_examples = self.create_icl_examples_with_tfidf(training_data, k=25)
+            logger.info(f"Loaded {len(self.icl_examples)} ICL examples")
+        else:
+            logger.warning("No training data available for ICL examples")
+
+    # ================= CORE BENCHMARK METHODS =================
+    
     def unload_ollama_model(self, model_name: str) -> bool:
         """Unload an Ollama model from memory"""
         try:
             logger.info(f"Unloading model from memory: {model_name}")
-            # Stop the specific model
             result = subprocess.run(['ollama', 'stop', model_name], 
                                 capture_output=True, text=True, timeout=30)
             
@@ -92,7 +329,6 @@ class NL2SHBenchmark:
         """Unload all models from memory"""
         try:
             logger.info("Unloading all models from memory")
-            # Stop all running models
             result = subprocess.run(['ollama', 'stop'], 
                                 capture_output=True, text=True, timeout=30)
             
@@ -129,10 +365,9 @@ class NL2SHBenchmark:
         """Pull an Ollama model if not already available"""
         try:
             logger.info(f"Pulling model: {model_name}")
-            # Use tqdm for model pulling progress (though subprocess doesn't show internal progress)
             with tqdm(total=1, desc=f"Pulling {model_name}") as pbar:
                 result = subprocess.run(['ollama', 'pull', model_name], 
-                                      capture_output=True, text=True, timeout=600)  # Increased timeout for larger models
+                                      capture_output=True, text=True, timeout=600)
                 pbar.update(1)
                 
             if result.returncode == 0:
@@ -178,7 +413,6 @@ class NL2SHBenchmark:
                     logger.error(f"Failed to download {model}")
                 pbar.set_postfix_str(f"Success: {len(successfully_pulled)}/{len(missing_models)}")
         
-        # Return all available models (existing + successfully pulled)
         final_available = self.get_available_ollama_models()
         return [model for model in required_models if model in final_available]
     
@@ -216,7 +450,7 @@ Now convert this natural language to shell command:"""
                 if result.returncode == 0:
                     response = result.stdout.strip()
                     
-                    # Enhanced cleaning - remove common unwanted prefixes/responses
+                    # Enhanced cleaning
                     unwanted_prefixes = [
                         "output:", "here's the command:", "sure,", "i'm ready!", 
                         "the shell command is:", "here's the shell command:",
@@ -233,21 +467,19 @@ Now convert this natural language to shell command:"""
                         if not line:
                             continue
                             
-                        # Skip lines that are just unwanted responses
                         line_lower = line.lower()
                         is_unwanted = any(prefix in line_lower for prefix in unwanted_prefixes)
                         
                         if not is_unwanted and line:
-                            # Remove any remaining prefixes from the line
                             for prefix in unwanted_prefixes:
                                 if line_lower.startswith(prefix):
                                     line = line[len(prefix):].strip()
                                     break
                             
-                            # Remove markdown code blocks
+                            # Fixed: Remove markdown code blocks properly
                             line = line.replace('``````', '').strip()
                             
-                            if line and not line.startswith('#'):  # Avoid comments
+                            if line and not line.startswith('#'):
                                 cleaned_response = line
                                 break
                     
@@ -261,303 +493,140 @@ Now convert this natural language to shell command:"""
                 logger.warning(f"Error on attempt {attempt + 1} for {model_name}: {e}")
                 
             if attempt < max_retries - 1:
-                time.sleep(1)  # Wait before retry
+                time.sleep(1)
         
         logger.error(f"All attempts failed for {model_name}")
         return ""
-    
-    def normalize_command(self, command: str) -> str:
-        """Normalize shell command for better comparison"""
-        # Remove extra whitespace
-        command = ' '.join(command.split())
-        # Convert to lowercase for case-insensitive comparison
-        command = command.lower()
-        return command
-    
-    def sequence_similarity(self, predicted: str, actual: str) -> float:
-        """Compute sequence similarity using difflib"""
-        if not predicted or not actual:
-            return 0.0
-        
-        predicted_norm = self.normalize_command(predicted)
-        actual_norm = self.normalize_command(actual)
-        
-        # Use difflib's SequenceMatcher for similarity
-        similarity = difflib.SequenceMatcher(None, predicted_norm, actual_norm).ratio()
-        return float(similarity)
-    
-    def jaccard_similarity(self, predicted: str, actual: str) -> float:
-        """Compute Jaccard similarity based on word tokens"""
-        if not predicted or not actual:
-            return 0.0
-        
-        predicted_norm = self.normalize_command(predicted)
-        actual_norm = self.normalize_command(actual)
-        
-        # Split into words/tokens
-        pred_tokens = set(predicted_norm.split())
-        actual_tokens = set(actual_norm.split())
-        
-        # Jaccard similarity = intersection / union
-        intersection = len(pred_tokens.intersection(actual_tokens))
-        union = len(pred_tokens.union(actual_tokens))
-        
-        if union == 0:
-            return 0.0
-        
-        return intersection / union
-    
-    def command_structure_similarity(self, predicted: str, actual: str) -> float:
-        """Compute similarity based on command structure (commands, flags, patterns)"""
-        if not predicted or not actual:
-            return 0.0
-        
-        def extract_features(command):
-            features = {
-                'commands': [],
-                'flags': [],
-                'operators': [],
-                'patterns': []
-            }
-            
-            # Extract commands (first word and words after pipes/operators)
-            words = command.split()
-            if words:
-                features['commands'].append(words[0])
-            
-            # Extract flags (words starting with -)
-            for word in words:
-                if word.startswith('-'):
-                    features['flags'].append(word)
-            
-            # Extract operators
-            operators = ['|', '&&', '||', ';', '>', '>>', '<', '&']
-            for op in operators:
-                if op in command:
-                    features['operators'].append(op)
-            
-            # Extract file patterns (words with wildcards)
-            for word in words:
-                if '*' in word or '?' in word or '[' in word:
-                    features['patterns'].append(word)
-            
-            return features
-        
-        pred_features = extract_features(self.normalize_command(predicted))
-        actual_features = extract_features(self.normalize_command(actual))
-        
-        # Calculate weighted similarity
-        similarities = []
-        weights = {'commands': 0.4, 'flags': 0.3, 'operators': 0.2, 'patterns': 0.1}
-        
-        for feature_type, weight in weights.items():
-            pred_set = set(pred_features[feature_type])
-            actual_set = set(actual_features[feature_type])
-            
-            if not pred_set and not actual_set:
-                sim = 1.0
-            elif not pred_set or not actual_set:
-                sim = 0.0
-            else:
-                intersection = len(pred_set.intersection(actual_set))
-                union = len(pred_set.union(actual_set))
-                sim = intersection / union if union > 0 else 0.0
-            
-            similarities.append(sim * weight)
-        
-        return sum(similarities)
-    
-    def compute_composite_similarity(self, predicted: str, actual: str, actual_alt: str = None) -> Dict[str, float]:
-        """Compute multiple similarity metrics and create a composite score"""
-        if not predicted:
-            return {
-                'sequence_similarity': 0.0,
-                'jaccard_similarity': 0.0,
-                'structure_similarity': 0.0,
-                'composite_score': 0.0
-            }
-        
-        # Calculate similarities for primary command
-        similarities = self._calculate_similarities(predicted, actual)
-        
-        # If alternative command exists, calculate similarities and take the better score
-        if actual_alt and actual_alt.strip():
-            alt_similarities = self._calculate_similarities(predicted, actual_alt)
-            
-            # Take the maximum score for each metric
-            similarities = {
-                key: max(similarities[key], alt_similarities[key])
-                for key in similarities.keys()
-            }
-        
-        return similarities
 
-    def _calculate_similarities(self, predicted: str, actual: str) -> Dict[str, float]:
-        """Helper method to calculate individual similarities"""
-        if not actual:
-            return {
-                'sequence_similarity': 0.0,
-                'jaccard_similarity': 0.0,
-                'structure_similarity': 0.0,
-                'composite_score': 0.0
-            }
-        
-        seq_sim = self.sequence_similarity(predicted, actual)
-        jaccard_sim = self.jaccard_similarity(predicted, actual)
-        struct_sim = self.command_structure_similarity(predicted, actual)
-        composite = (seq_sim * 0.3 + jaccard_sim * 0.3 + struct_sim * 0.4)
-        
-        return {
-            'sequence_similarity': seq_sim,
-            'jaccard_similarity': jaccard_sim,
-            'structure_similarity': struct_sim,
-            'composite_score': composite
-        }
+    # ================= ENHANCED BENCHMARK METHODS =================
     
-    def exact_match_score(self, predicted: str, actual: str) -> float:
-        """Compute exact match score"""
-        if not predicted or not actual:
-            return 0.0
-        
-        # Normalize both commands for comparison
-        pred_norm = self.normalize_command(predicted)
-        actual_norm = self.normalize_command(actual)
-        
-        return 1.0 if pred_norm == actual_norm else 0.0
-    
-    def functional_equivalence_score(self, predicted: str, actual: str) -> float:
-        """Simple heuristic for functional equivalence"""
-        if not predicted or not actual:
-            return 0.0
-        
-        # Check if commands achieve similar functionality
-        # This is a simplified heuristic - you could expand this
-        
-        pred_norm = self.normalize_command(predicted)
-        actual_norm = self.normalize_command(actual)
-        
-        # Extract base commands
-        pred_cmd = pred_norm.split()[0] if pred_norm.split() else ""
-        actual_cmd = actual_norm.split()[0] if actual_norm.split() else ""
-        
-        # Same base command is a good start
-        if pred_cmd == actual_cmd:
-            # If same command, check flag similarity
-            pred_flags = set(word for word in pred_norm.split() if word.startswith('-'))
-            actual_flags = set(word for word in actual_norm.split() if word.startswith('-'))
-            
-            if pred_flags and actual_flags:
-                flag_sim = len(pred_flags.intersection(actual_flags)) / len(pred_flags.union(actual_flags))
-                return 0.7 + 0.3 * flag_sim  # Base score + flag bonus
-            else:
-                return 0.7  # Same command, different or no flags
-        
-        return 0.0
-    
-    def benchmark_model(self, model_name: str, test_data: List[Dict], 
-                       sample_size: int = None) -> Dict:
-        """Benchmark a single model on the test dataset"""
-        logger.info(f"Benchmarking model: {model_name}")
+    def benchmark_model_enhanced(self, model_name: str, test_data: List[Dict], 
+                                sample_size: int = None, methods: List[str] = None) -> Dict:
+        """Enhanced benchmark using paper's methods"""
+        logger.info(f"Enhanced benchmarking model: {model_name}")
         
         if sample_size:
             test_data = test_data[:sample_size]
         
+        if methods is None:
+            methods = ['baseline', 'parsing', 'icl']  # Default methods
+        
         results = {
             'model': model_name,
             'predictions': [],
-            'sequence_similarities': [],
-            'jaccard_similarities': [],
-            'structure_similarities': [],
-            'composite_scores': [],
-            'exact_matches': [],
-            'functional_equivalence': [],
             'total_samples': len(test_data),
-            'successful_predictions': 0
+            'methods_tested': methods
         }
         
-        # Enhanced tqdm with more details
-        with tqdm(test_data, desc=f"Testing {model_name}", 
-                 unit="queries", ncols=100, leave=True) as pbar:
-            for i, item in enumerate(pbar):
+        # Initialize metrics for each method
+        for method in methods:
+            results[f'{method}_execution_tfidf_scores'] = []
+            results[f'{method}_execution_llm_scores'] = []
+            results[f'{method}_functional_equivalence_rates'] = []
+        
+        with tqdm(test_data, desc=f"Enhanced testing {model_name}") as pbar:
+            for item in pbar:
                 nl_query = item['nl']
                 expected_sh = item['sh']
                 expected_alt = item.get('sh_alt', '')
                 
-                # Update progress bar with current query info
-                pbar.set_postfix_str(f"Query: {nl_query[:30]}...")
+                # Test different methods
+                prediction_result = {
+                    'nl': nl_query,
+                    'expected': expected_sh,
+                    'expected_alt': expected_alt,
+                    'predictions': {}
+                }
                 
-                # Get prediction from model
-                predicted_sh = self.query_ollama_model(model_name, nl_query)
+                for method in methods:
+                    # Get prediction based on method
+                    if method == 'baseline':
+                        prediction = self.query_ollama_model(model_name, nl_query)
+                    elif method == 'constrained_decoding':
+                        prediction = self.constrained_decoding_query(model_name, nl_query)
+                    elif method == 'parsing':
+                        prediction = self.query_ollama_model(model_name, nl_query)
+                        # Apply markdown parsing
+                        prediction = self.extract_command_from_markdown(prediction)
+                    elif method == 'icl':
+                        if self.icl_examples:
+                            prediction = self.icl_enhanced_query(model_name, nl_query, self.icl_examples)
+                        else:
+                            prediction = self.query_ollama_model(model_name, nl_query)
+                    else:
+                        prediction = self.query_ollama_model(model_name, nl_query)
+                    
+                    prediction_result['predictions'][method] = prediction
+                    
+                    # Evaluate using paper's execution-based FEH
+                    if prediction:
+                        eval_result = self.execution_based_feh(prediction, expected_sh, nl_query)
+                        
+                        results[f'{method}_execution_tfidf_scores'].append(eval_result['execution_tfidf_score'])
+                        results[f'{method}_execution_llm_scores'].append(eval_result['execution_llm_score'])
+                        results[f'{method}_functional_equivalence_rates'].append(1.0 if eval_result['functional_equivalent'] else 0.0)
+                        
+                        # Store evaluation details
+                        prediction_result[f'{method}_eval'] = eval_result
+                    else:
+                        results[f'{method}_execution_tfidf_scores'].append(0.0)
+                        results[f'{method}_execution_llm_scores'].append(0.0)
+                        results[f'{method}_functional_equivalence_rates'].append(0.0)
+                        
+                        prediction_result[f'{method}_eval'] = {
+                            'execution_tfidf_score': 0.0,
+                            'execution_llm_score': 0.0,
+                            'functional_equivalent': False
+                        }
                 
-                if predicted_sh:
-                    results['successful_predictions'] += 1
-                    
-                    # Compute all similarity metrics (include alternative command)
-                    similarities = self.compute_composite_similarity(predicted_sh, expected_sh, expected_alt)
-                    exact_match = self.exact_match_score(predicted_sh, expected_sh)
-                    func_equiv = self.functional_equivalence_score(predicted_sh, expected_sh)
-                    
-                    prediction_result = {
-                        'nl': nl_query,
-                        'expected': expected_sh,
-                        'expected_alt': expected_alt,
-                        'predicted': predicted_sh,
-                        **similarities,
-                        'exact_match': exact_match,
-                        'functional_equivalence': func_equiv
-                    }
-                    
-                    results['predictions'].append(prediction_result)
-                    results['sequence_similarities'].append(similarities['sequence_similarity'])
-                    results['jaccard_similarities'].append(similarities['jaccard_similarity'])
-                    results['structure_similarities'].append(similarities['structure_similarity'])
-                    results['composite_scores'].append(similarities['composite_score'])
-                    results['exact_matches'].append(exact_match)
-                    results['functional_equivalence'].append(func_equiv)
-                else:
-                    empty_result = {
-                        'nl': nl_query,
-                        'expected': expected_sh,
-                        'expected_alt': expected_alt,
-                        'predicted': '',
-                        'sequence_similarity': 0.0,
-                        'jaccard_similarity': 0.0,
-                        'structure_similarity': 0.0,
-                        'composite_score': 0.0,
-                        'exact_match': 0.0,
-                        'functional_equivalence': 0.0
-                    }
-                    results['predictions'].append(empty_result)
-                    results['sequence_similarities'].append(0.0)
-                    results['jaccard_similarities'].append(0.0)
-                    results['structure_similarities'].append(0.0)
-                    results['composite_scores'].append(0.0)
-                    results['exact_matches'].append(0.0)
-                    results['functional_equivalence'].append(0.0)
+                results['predictions'].append(prediction_result)
                 
-                # Update progress bar with current metrics
-                if results['composite_scores']:
-                    current_avg = np.mean(results['composite_scores'])
-                    pbar.set_postfix_str(f"Avg Score: {current_avg:.3f}")
+                # Update progress with current best method score
+                if methods and results[f'{methods[0]}_execution_llm_scores']:
+                    current_avg = np.mean(results[f'{methods[0]}_execution_llm_scores'])
+                    pbar.set_postfix_str(f"Avg LLM Score: {current_avg:.3f}")
         
-        # Calculate aggregate metrics
-        results['avg_sequence_similarity'] = np.mean(results['sequence_similarities'])
-        results['avg_jaccard_similarity'] = np.mean(results['jaccard_similarities'])
-        results['avg_structure_similarity'] = np.mean(results['structure_similarities'])
-        results['avg_composite_score'] = np.mean(results['composite_scores'])
-        results['exact_match_rate'] = np.mean(results['exact_matches'])
-        results['functional_equivalence_rate'] = np.mean(results['functional_equivalence'])
-        results['success_rate'] = results['successful_predictions'] / len(test_data)
-        
-        logger.info(f"Completed {model_name}: "
-                   f"Composite Score: {results['avg_composite_score']:.3f}, "
-                   f"Exact Match: {results['exact_match_rate']:.3f}, "
-                   f"Success Rate: {results['success_rate']:.3f}")
+        # Calculate aggregate metrics for each method
+        for method in methods:
+            results[f'avg_{method}_tfidf_score'] = np.mean(results[f'{method}_execution_tfidf_scores'])
+            results[f'avg_{method}_llm_score'] = np.mean(results[f'{method}_execution_llm_scores'])
+            results[f'avg_{method}_functional_equivalence'] = np.mean(results[f'{method}_functional_equivalence_rates'])
         
         return results
+
+    def extract_command_from_markdown(self, text: str) -> str:
+        """Extract command from markdown code blocks"""
+        if not text:
+            return ""
+        
+        # Look for code blocks
+        code_block_patterns = [
+            r'``````',  # Fixed: Added closing quote
+            r'`([^`]+)`'
+        ]
+        
+        for pattern in code_block_patterns:
+            matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+            if matches:
+                # Fixed: matches is a list, need to get first match
+                command = matches[0].strip()
+                if command:
+                    # Remove any remaining markdown artifacts
+                    command = command.replace('bash\n', '').replace('sh\n', '').replace('shell\n', '')
+                    return command.strip()
+        
+        # If no code blocks found, return cleaned text
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('#') and not line.lower().startswith(('here', 'the', 'you')):
+                return line
+        
+        return text.strip()
     
-    def run_benchmark(self, models: List[str], sample_size: int = None) -> List[Dict]:
-        """Run benchmark on multiple models"""
+    def run_enhanced_benchmark(self, models: List[str], sample_size: int = None, 
+                              methods: List[str] = None) -> List[Dict]:
+        """Run enhanced benchmark with paper's evaluation methods"""
         # Load test dataset
         logger.info("Loading test dataset...")
         test_data = self.load_test_dataset()
@@ -567,12 +636,16 @@ Now convert this natural language to shell command:"""
         
         logger.info(f"Loaded {len(test_data)} test samples")
         
-        # Clear any existing models from memory before starting
+        # Load ICL examples
+        if methods is None or 'icl' in methods:
+            logger.info("Loading ICL examples...")
+            self.load_icl_examples()
+        
+        # Clear any existing models from memory
         self.unload_all_models()
         
         all_results = []
         
-        # Add tqdm for model iteration
         with tqdm(models, desc="Benchmarking models", unit="model", ncols=100) as model_pbar:
             for model in model_pbar:
                 model_pbar.set_description(f"Processing {model}")
@@ -586,58 +659,65 @@ Now convert this natural language to shell command:"""
                             logger.error(f"Failed to pull model {model}, skipping...")
                             continue
                     
-                    # Run benchmark
+                    # Run enhanced benchmark
                     model_pbar.set_postfix_str("Running benchmark...")
-                    model_results = self.benchmark_model(model, test_data, sample_size)
+                    model_results = self.benchmark_model_enhanced(model, test_data, sample_size, methods)
                     all_results.append(model_results)
                     
-                    # Save intermediate results with timestamp
-                    intermediate_filename = f"intermediate_results_{int(time.time())}.json"
+                    # Save intermediate results
+                    intermediate_filename = f"enhanced_results_{int(time.time())}.json"
                     self.save_results(all_results, intermediate_filename)
                     
-                    # Update model progress bar with current results
-                    model_pbar.set_postfix_str(f"Score: {model_results['avg_composite_score']:.3f}")
+                    # Update progress with results
+                    if methods:
+                        best_method_score = max([model_results[f'avg_{method}_llm_score'] for method in methods])
+                        model_pbar.set_postfix_str(f"Best Score: {best_method_score:.3f}")
                     
                 finally:
-                    # IMPORTANT: Unload the model after testing to free memory
+                    # Unload model after testing
                     model_pbar.set_postfix_str("Unloading model...")
                     self.unload_ollama_model(model)
-                    # Small delay to ensure cleanup
                     time.sleep(2)
         
-        # Final cleanup - ensure all models are unloaded
+        # Final cleanup
         self.unload_all_models()
         
         return all_results
     
-    def create_leaderboard(self, results: List[Dict]) -> pd.DataFrame:
-        """Create a leaderboard DataFrame from results"""
+    def create_enhanced_leaderboard(self, results: List[Dict], methods: List[str] = None) -> pd.DataFrame:
+        """Create enhanced leaderboard DataFrame from results"""
+        if methods is None:
+            methods = ['baseline', 'parsing', 'icl']
+        
         leaderboard_data = []
         
         for result in results:
-            leaderboard_data.append({
-                'Model': result['model'],
-                'Composite Score': result['avg_composite_score'],
-                'Sequence Similarity': result['avg_sequence_similarity'],
-                'Jaccard Similarity': result['avg_jaccard_similarity'],
-                'Structure Similarity': result['avg_structure_similarity'],
-                'Exact Match Rate': result['exact_match_rate'],
-                'Functional Equiv Rate': result['functional_equivalence_rate'],
-                'Success Rate': result['success_rate'],
-                'Total Samples': result['total_samples']
-            })
+            row_data = {'Model': result['model']}
+            
+            for method in methods:
+                if f'avg_{method}_llm_score' in result:
+                    row_data[f'{method.title()} LLM Score'] = result[f'avg_{method}_llm_score']
+                    row_data[f'{method.title()} TF-IDF Score'] = result[f'avg_{method}_tfidf_score']
+                    row_data[f'{method.title()} Functional Equiv'] = result[f'avg_{method}_functional_equivalence']
+            
+            row_data['Total Samples'] = result['total_samples']
+            leaderboard_data.append(row_data)
         
         df = pd.DataFrame(leaderboard_data)
         
-        # Sort by composite score (primary) and exact match rate (secondary)
-        df = df.sort_values(['Composite Score', 'Exact Match Rate'], ascending=False)
+        # Sort by best LLM score across methods
+        llm_score_columns = [col for col in df.columns if 'LLM Score' in col]
+        if llm_score_columns:
+            df['Best LLM Score'] = df[llm_score_columns].max(axis=1)
+            df = df.sort_values('Best LLM Score', ascending=False)
+        
         df = df.reset_index(drop=True)
-        df.index += 1  # Start ranking from 1
+        df.index += 1
         
         return df
     
     def save_results(self, results: List[Dict], filename: str):
-        """Save results to JSON file in the benchmarks directory"""
+        """Save results to JSON file"""
         try:
             filepath = self.benchmark_dir / filename
             with open(filepath, 'w') as f:
@@ -647,7 +727,7 @@ Now convert this natural language to shell command:"""
             logger.error(f"Error saving results: {e}")
     
     def save_leaderboard(self, leaderboard: pd.DataFrame, filename: str):
-        """Save leaderboard to CSV file in the benchmarks directory"""
+        """Save leaderboard to CSV file"""
         try:
             filepath = self.benchmark_dir / filename
             leaderboard.to_csv(filepath, index_label='Rank')
@@ -655,42 +735,15 @@ Now convert this natural language to shell command:"""
         except Exception as e:
             logger.error(f"Error saving leaderboard: {e}")
 
-    def format_leaderboard_display(self, leaderboard: pd.DataFrame) -> str:
-        """Format leaderboard for better terminal display"""
-        # Create a formatted string representation
-        header = "┌─────┬─────────────────────────┬──────────────────┬──────────────────┬──────────────────┬──────────────────┬──────────────────┬──────────────────┬──────────────────┬──────────────────┐"
-        separator = "├─────┼─────────────────────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┤"
-        footer = "└─────┴─────────────────────────┴──────────────────┴──────────────────┴──────────────────┴──────────────────┴──────────────────┴──────────────────┴──────────────────┴──────────────────┘"
-        
-        # Column headers
-        col_header = "│ Rank│ Model                   │ Composite Score  │ Sequence Sim     │ Jaccard Sim      │ Structure Sim    │ Exact Match Rate │ Functional Equiv │ Success Rate     │ Total Samples    │"
-        
-        formatted_output = f"{header}\n{col_header}\n{separator}\n"
-        
-        for i, row in leaderboard.iterrows():
-            rank = str(i).center(4)
-            model = row['Model'][:23].ljust(23)
-            comp_score = f"{row['Composite Score']:.3f}".center(16)
-            seq_sim = f"{row['Sequence Similarity']:.3f}".center(16)
-            jaccard_sim = f"{row['Jaccard Similarity']:.3f}".center(16)
-            struct_sim = f"{row['Structure Similarity']:.3f}".center(16)
-            exact_match = f"{row['Exact Match Rate']:.3f}".center(16)
-            func_equiv = f"{row['Functional Equiv Rate']:.3f}".center(16)
-            success_rate = f"{row['Success Rate']:.3f}".center(16)
-            total_samples = str(int(row['Total Samples'])).center(16)
-            
-            row_line = f"│ {rank}│ {model} │ {comp_score} │ {seq_sim} │ {jaccard_sim} │ {struct_sim} │ {exact_match} │ {func_equiv} │ {success_rate} │ {total_samples} │"
-            formatted_output += f"{row_line}\n"
-        
-        formatted_output += footer
-        return formatted_output
+# ================= UI AND UTILITY FUNCTIONS =================
 
 def print_banner():
-    """Print a nice banner for the benchmark"""
+    """Print a nice banner for the enhanced benchmark"""
     banner = """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║                          NL2SH BENCHMARK SYSTEM                          ║
-║                  Natural Language to Shell Command Evaluation            ║
+║                    ENHANCED NL2SH BENCHMARK SYSTEM                       ║
+║              Integrated with Paper's Evaluation Methods                  ║
+║            Natural Language to Shell Command Evaluation                  ║
 ╚══════════════════════════════════════════════════════════════════════════╝
     """
     print(banner)
@@ -702,59 +755,38 @@ def print_section_header(title: str):
     print(f"║ {title.center(width-4)} ║")
     print(f"{'═' * width}")
 
-def print_model_list(models: List[str], title: str):
-    """Print a formatted list of models"""
-    print(f"\n┌─────┬─────────────────────────────────────────────┐")
-    print(f"│  #  │ {title.ljust(43)} │")
-    print(f"├─────┼─────────────────────────────────────────────┤")
-    for i, model in enumerate(models, 1):
-        print(f"│ {str(i).rjust(2)}  │ {model.ljust(43)} │")
-    print(f"└─────┴─────────────────────────────────────────────┘")
+def print_method_options():
+    """Print available enhancement methods"""
+    print(f"\n┌─────────────────────────────────────────────────────────────────┐")
+    print(f"│ Enhancement Methods Available (from the paper)                 │")
+    print(f"├─────────────────────────────────────────────────────────────────┤")
+    print(f"│ 1. baseline           - Standard model output                  │")
+    print(f"│ 2. parsing            - Extract commands from markdown         │")
+    print(f"│ 3. constrained_decoding - Constrain first token to bash utils │")
+    print(f"│ 4. icl                - In-context learning with examples      │")
+    print(f"└─────────────────────────────────────────────────────────────────┘")
 
-def print_model_list_with_details(models: List[str], title: str, available_models: List[str]):
-    """Print a formatted list of models with availability status"""
-    print(f"\n┌─────┬─────────────────────────────────────────────┬──────────────┐")
-    print(f"│  #  │ {title.ljust(43)} │ Status       │")
-    print(f"├─────┼─────────────────────────────────────────────┼──────────────┤")
-    for i, model in enumerate(models, 1):
-        status = "Available" if model in available_models else "Need Download"
-        status_color = status.ljust(12)
-        print(f"│ {str(i).rjust(2)}  │ {model.ljust(43)} │ {status_color} │")
-    print(f"└─────┴─────────────────────────────────────────────┴──────────────┘")
-
-def print_example_predictions(predictions: List[Dict], model_name: str):
-    """Print formatted example predictions"""
-    print(f"\n┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐")
-    print(f"│ Example Predictions from Top Model: {model_name.ljust(60)} │")
-    print(f"└─────────────────────────────────────────────────────────────────────────────────────────────────────┘")
-    
-    for i, pred in enumerate(predictions[:3], 1):
-        print(f"\n┌── Query {i} " + "─" * 70)
-        print(f"│ Input:      {pred['nl']}")
-        print(f"│ Expected:   {pred['expected']}")
-        if pred.get('expected_alt'):
-            print(f"│ Expected Alt: {pred['expected_alt']}")
-        print(f"│ Predicted:  {pred['predicted']}")
-        print(f"│ Score:      {pred['composite_score']:.3f}")
-        print(f"└" + "─" * 77)
-
-# Example usage
 def main():
     print_banner()
     
-    # Initialize benchmark system
-    benchmark = NL2SHBenchmark()
+    # Initialize enhanced benchmark system
+    benchmark = EnhancedNL2SHBenchmark()
+    
+    print_section_header("ENHANCED EVALUATION METHODS")
+    print("This system integrates the paper's evaluation methods:")
+    print("-  Execution + LLM evaluation (95% accuracy)")
+    print("-  Execution + TF-IDF comparison (replaces sentence transformers)")
+    print("-  Multiple translation enhancement methods")
+    print("-  Comprehensive functional equivalence testing")
     
     print_section_header("CHECKING AVAILABLE MODELS")
     print("Scanning for locally available Ollama models...")
     available_models = benchmark.get_available_ollama_models()
-    
-    # Get recommended models
     recommended_models = benchmark.get_recommended_models()
     
     print(f"Found {len(available_models)} locally available models")
     
-    # Enhanced model selection options
+    # Model selection (similar to original)
     print(f"\n┌─────────────────────────────────────────────────┐")
     print(f"│ Model Selection Options                         │")
     print(f"├─────────────────────────────────────────────────┤")
@@ -766,73 +798,67 @@ def main():
     choice = input("\nEnter your choice (1, 2, or 3): ").strip()
     
     if choice == "1":
-        # Recommended models option
-        print_section_header("RECOMMENDED MODELS FOR 8GB RAM")
-        print("These models are optimized for 8GB RAM systems and provide excellent performance:")
-        print_model_list_with_details(recommended_models, "Recommended Models", available_models)
-        
-        print(f"\nRecommended setup details:")
-        print(f"• Total models: {len(recommended_models)}")
-        print(f"• Memory optimized for 8GB RAM")
-        print(f"• Mix of general and code-specialized models")
-        print(f"• Includes latest Llama 3.2, CodeLlama, DeepSeek-Coder, etc.")
-        
-        # Check which models need to be downloaded
         models_to_test = benchmark.pull_missing_models(recommended_models)
-        if not models_to_test:
-            print("No models available for testing. Exiting.")
-            return
-        
-        print(f"\nFinal model list for testing: {len(models_to_test)} models")
-        for i, model in enumerate(models_to_test, 1):
-            print(f"  {i}. {model}")
-            
     elif choice == "2":
-        # All available models
-        if available_models:
-            print_model_list(available_models, "Available Models")
-            models_to_test = available_models
-            print(f"Selected all {len(models_to_test)} available models for testing")
-        else:
-            print("No locally available models found. Using recommended list.")
-            models_to_test = benchmark.pull_missing_models(recommended_models)
-            
+        models_to_test = available_models if available_models else benchmark.pull_missing_models(recommended_models)
     elif choice == "3":
-        # Custom selection
         if available_models:
-            print_model_list(available_models, "Available Models")
-            print("\nEnter model numbers to test (comma-separated, e.g., 1,3,5):")
+            print("\nAvailable models:")
+            for i, model in enumerate(available_models, 1):
+                print(f"  {i}. {model}")
             try:
-                indices = [int(x.strip()) - 1 for x in input().split(',')]
+                indices = [int(x.strip()) - 1 for x in input("Enter model numbers (comma-separated): ").split(',')]
                 models_to_test = [available_models[i] for i in indices if 0 <= i < len(available_models)]
-                print(f"Selected {len(models_to_test)} models for testing")
             except (ValueError, IndexError):
                 print("Invalid input. Using recommended models.")
                 models_to_test = benchmark.pull_missing_models(recommended_models)
         else:
-            print("No locally available models found. Using recommended list.")
             models_to_test = benchmark.pull_missing_models(recommended_models)
     else:
-        print("Invalid choice. Using recommended models.")
         models_to_test = benchmark.pull_missing_models(recommended_models)
     
     if not models_to_test:
         print("No models selected for testing. Exiting.")
         return
     
+    print_section_header("ENHANCEMENT METHODS SELECTION")
+    print_method_options()
+    
+    methods_input = input("\nSelect methods to test (comma-separated, e.g., '1,2,4' or 'all'): ").strip()
+    
+    method_map = {
+        '1': 'baseline',
+        '2': 'parsing', 
+        '3': 'constrained_decoding',
+        '4': 'icl'
+    }
+    
+    if methods_input.lower() == 'all':
+        methods_to_test = list(method_map.values())
+    else:
+        try:
+            selected_indices = [x.strip() for x in methods_input.split(',')]
+            methods_to_test = [method_map[idx] for idx in selected_indices if idx in method_map]
+        except:
+            print("Invalid input. Using default methods: baseline, parsing, icl")
+            methods_to_test = ['baseline', 'parsing', 'icl']
+    
+    if not methods_to_test:
+        methods_to_test = ['baseline', 'parsing', 'icl']
+    
+    print(f"Selected methods: {', '.join(methods_to_test)}")
+    
     print_section_header("DATASET CONFIGURATION")
-    print("Loading test dataset to determine size...")
+    print("Loading test dataset...")
     test_data = benchmark.load_test_dataset()
     if test_data:
         total_samples = len(test_data)
-        print(f"Dataset loaded successfully")
-        print(f"Total samples available: {total_samples}")
+        print(f"Dataset loaded successfully: {total_samples} samples")
 
-        sample_input = input(f"\nEnter sample size for testing (or press Enter for full dataset of {total_samples}): ").strip()
+        sample_input = input(f"\nEnter sample size (or press Enter for full dataset): ").strip()
         if sample_input:
             try:
-                sample_size = int(sample_input)
-                sample_size = min(sample_size, total_samples)  # Don't exceed available samples
+                sample_size = min(int(sample_input), total_samples)
                 print(f"Using sample size: {sample_size}")
             except ValueError:
                 print("Invalid input. Using full dataset.")
@@ -844,40 +870,48 @@ def main():
         print("Failed to load dataset. Exiting.")
         return
     
-    print_section_header("BENCHMARK EXECUTION")
-    print(f"Starting benchmark with {len(models_to_test)} models")
-    if sample_size:
-        print(f"Sample size: {sample_size}")
-    else:
-        print(f"Full dataset: {total_samples} samples")
+    print_section_header("ENHANCED BENCHMARK EXECUTION")
+    print(f"Starting enhanced benchmark:")
+    print(f"-  Models: {len(models_to_test)}")
+    print(f"-  Methods: {len(methods_to_test)} ({', '.join(methods_to_test)})")
+    print(f"-  Dataset size: {sample_size or total_samples}")
+    print(f"-  Using paper's 95% accuracy evaluation method")
+    print(f"-  Using TF-IDF instead of sentence transformers")
     
-    results = benchmark.run_benchmark(models_to_test, sample_size)
+    # Run enhanced benchmark
+    results = benchmark.run_enhanced_benchmark(models_to_test, sample_size, methods_to_test)
     
     if results:
-        print_section_header("BENCHMARK RESULTS")
+        print_section_header("ENHANCED BENCHMARK RESULTS")
         
-        # Create and display leaderboard
-        leaderboard = benchmark.create_leaderboard(results)
-        print("\nNL2SH BENCHMARK LEADERBOARD")
-        print(benchmark.format_leaderboard_display(leaderboard))
+        # Create and display enhanced leaderboard
+        leaderboard = benchmark.create_enhanced_leaderboard(results, methods_to_test)
+        print("\nENHANCED NL2SH BENCHMARK LEADERBOARD")
+        print("(Using paper's execution + LLM evaluation method with TF-IDF)")
+        print("\n" + str(leaderboard))
         
-        # Save final results (overwrites each time)
-        benchmark.save_results(results, 'final_results.json')
-        benchmark.save_leaderboard(leaderboard, 'final_leaderboard.csv')
+        # Save results
+        benchmark.save_results(results, 'enhanced_final_results.json')
+        benchmark.save_leaderboard(leaderboard, 'enhanced_final_leaderboard.csv')
         
         benchmark_dir = Path.home() / '.ollash' / 'benchmarks'
         print(f"\nFiles saved:")
-        print(f"   Final results: {benchmark_dir / 'final_results.json'}")
-        print(f"   Final leaderboard: {benchmark_dir / 'final_leaderboard.csv'}")
-        print(f"   Intermediate results: {benchmark_dir}")
+        print(f"   Enhanced results: {benchmark_dir / 'enhanced_final_results.json'}")
+        print(f"   Enhanced leaderboard: {benchmark_dir / 'enhanced_final_leaderboard.csv'}")
         
-        # Print example predictions from top model
-        print_section_header("EXAMPLE PREDICTIONS")
-        top_model_results = sorted(results, key=lambda x: x['avg_composite_score'], reverse=True)[0]
-        print_example_predictions(top_model_results['predictions'], top_model_results['model'])
+        # Show method comparison for top model
+        print_section_header("METHOD COMPARISON")
+        if results:
+            top_model = max(results, key=lambda x: max([x.get(f'avg_{method}_llm_score', 0) for method in methods_to_test]))
+            print(f"Top model: {top_model['model']}")
+            print("\nMethod Performance Comparison:")
+            for method in methods_to_test:
+                llm_score = top_model.get(f'avg_{method}_llm_score', 0)
+                func_equiv = top_model.get(f'avg_{method}_functional_equivalence', 0)
+                print(f"  {method.ljust(20)}: LLM Score = {llm_score:.3f}, Functional Equiv = {func_equiv:.3f}")
         
-        print(f"\nBenchmark completed successfully!")
-        print(f"Top performing model: {top_model_results['model']} (Score: {top_model_results['avg_composite_score']:.3f})")
+        print(f"\nEnhanced benchmark completed successfully!")
+        print(f"Results include paper's execution-based evaluation with TF-IDF similarity!")
         
     else:
         print("No results to display")
