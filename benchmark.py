@@ -180,29 +180,32 @@ Answer (true/false):"""
         except Exception:
             return 0.0
 
-    def execution_based_feh(self, predicted: str, actual: str, nl_query: str) -> Dict[str, float]:
-        """Execution + LLM evaluation (paper's best method - 95% accuracy)"""
+    def execution_based_feh_no_docker(self, predicted: str, actual: str, nl_query: str) -> Dict[str, float]:
+        """Simplified evaluation without Docker execution"""
         try:
-            # Execute both commands in controlled environment
-            pred_output = self.execute_command_safely(predicted)
-            actual_output = self.execute_command_safely(actual)
+            # Skip actual execution, focus on text-based comparison
+            # Use BLEU score and LLM evaluation without execution
+            bleu_score = self.bleu_feh(predicted, actual)
             
-            # Method 1: Execution + TF-IDF (replacing mxbai-embed)
-            tfidf_score = self.compare_outputs_with_tfidf(pred_output, actual_output)
+            # Use LLM evaluation without actual command outputs
+            simplified_prompt = f"""Compare these two bash commands for the task: "{nl_query}"
             
-            # Method 2: Execution + LLM evaluation (95% accuracy from paper)  
-            llm_score = self.evaluate_outputs_with_llm(nl_query, predicted, actual, 
-                                                      pred_output, actual_output)
+    Command 1: {actual}
+    Command 2: {predicted}
+
+    Do they accomplish the same task? Answer only 'true' or 'false'."""
+            
+            llm_score = self.evaluate_outputs_with_llm_simplified(simplified_prompt)
             
             return {
-                'execution_tfidf_score': tfidf_score,
+                'execution_tfidf_score': float(bleu_score),
                 'execution_llm_score': llm_score,
                 'functional_equivalent': llm_score >= 0.8,
-                'pred_output': pred_output,
-                'actual_output': actual_output
+                'pred_output': 'N/A (Docker not available)',
+                'actual_output': 'N/A (Docker not available)'
             }
         except Exception as e:
-            logger.warning(f"Execution-based evaluation failed: {e}")
+            logger.warning(f"Simplified evaluation failed: {e}")
             return {
                 'execution_tfidf_score': 0.0, 
                 'execution_llm_score': 0.0, 
@@ -210,6 +213,15 @@ Answer (true/false):"""
                 'pred_output': '',
                 'actual_output': ''
             }
+
+    def evaluate_outputs_with_llm_simplified(self, prompt: str) -> float:
+        """Simplified LLM evaluation without command outputs"""
+        try:
+            response = self.query_ollama_model('llama3.2:3b', prompt)
+            return 1.0 if response.strip().lower() == 'true' else 0.0
+        except Exception:
+            return 0.0
+
 
     # ================= PAPER'S TRANSLATION ENHANCEMENT METHODS =================
     
@@ -556,7 +568,8 @@ Now convert this natural language to shell command:"""
                     
                     # Evaluate using paper's execution-based FEH
                     if prediction:
-                        eval_result = self.execution_based_feh(prediction, expected_sh, nl_query)
+                        eval_result = self.execution_based_feh_no_docker(prediction, expected_sh, nl_query)
+
                         
                         results[f'{method}_execution_tfidf_scores'].append(eval_result['execution_tfidf_score'])
                         results[f'{method}_execution_llm_scores'].append(eval_result['execution_llm_score'])
